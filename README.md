@@ -30,9 +30,10 @@ The first command generates ignored `.cargo/config.local.toml` patches for
 all crates in `../photocraft`, `../vectorcraft`, and `../DitoDitoInfinito`.
 Use `--photocraft PATH`, `--vectorcraft PATH` and `--ddi PATH` for worktrees.
 The development wrapper uses a separate manifest and lockfile under `.local/dev`
-and shares `target/`; it never changes the committed Git pins or `Cargo.lock`.
+and writes builds to `target/local/`; it never changes the committed Git pins
+or `Cargo.lock`. This also separates locally staged assets from Git builds.
 Local settings are explicit: ordinary Cargo commands and `run.sh` use Git.
-Run `target/release/skincraft` with an isolated `DDI_STUDIO_HOME` to try a
+Run `target/local/release/skincraft` with an isolated `DDI_STUDIO_HOME` to try a
 local build without rebuilding against Git.
 
 Before publishing an update, build and test the local overrides, push the

@@ -11,7 +11,7 @@ text=text.replace('path = "src/main.rs"',f'path = "{root}/src/main.rs"')
 text+='\n[lib]\npath = "'+str(root/'src/lib.rs')+'"\n'
 (shadow/'Cargo.toml').write_text(text)
 env=os.environ.copy()
-env.setdefault('CARGO_TARGET_DIR',str(root/'target'))
+env.setdefault('CARGO_TARGET_DIR',str(root/'target/local'))
 env.setdefault('DDI_HOME',str(root/'target/scratch/home'))
 env.setdefault('PHOTOCRAFT_CONFIG_DIR',str(root/'target/scratch/photocraft'))
 args=sys.argv[1:] or ['build','--release']
