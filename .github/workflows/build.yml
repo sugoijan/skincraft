@@ -1,0 +1,18 @@
+name: SkinCraft Git dependency build
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: python3 scripts/check-sources.py
+      - run: cargo build --release --locked
+      - run: cargo test --release --locked --lib -- --test-threads=1
+        env:
+          DDI_HOME: ${{ github.workspace }}/target/scratch/home
+          PHOTOCRAFT_CONFIG_DIR: ${{ github.workspace }}/target/scratch/photocraft

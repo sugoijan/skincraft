@@ -1,0 +1,9 @@
+# Generate your complete version with: python3 scripts/local-patches.py
+# This example illustrates one crate per repository. The generator includes
+# related crates so their shared Rust types come from the same checkout.
+[patch."https://github.com/sugoijan/photocraft.git"]
+photocraft-ui-egui = { path = "../photocraft/crates/ui-egui" }
+[patch."https://github.com/sugoijan/vectorcraft.git"]
+vectorcraft-ui-egui = { path = "../vectorcraft/crates/ui-egui" }
+[patch."https://github.com/sugoijan/ditoditoinfinito.git"]
+ddi-render = { path = "../DitoDitoInfinito/render" }

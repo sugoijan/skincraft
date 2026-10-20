@@ -1,0 +1,13 @@
+SkinCraft application code is MIT licensed; see LICENSE.
+
+PhotoCraft and VectorCraft are separately maintained MIT OR Apache-2.0
+libraries, consumed from the pinned repositories in Cargo.toml. Their notices
+and third-party licenses remain in those repositories.
+
+Dito Dito Infinito is MIT licensed. Its staged assets include third-party
+noteskins and fonts with their own licenses and PROVENANCE.toml records.
+The embedded Iosevka HUD font is SIL OFL-1.1 (Copyright 2015-2026 Renzhi Li (aka. Belleve Invis)). See LICENSES/OFL-1.1.txt. The font is consumed
+through ddi_render::HUD_FONT without modifying it.
+
+This source was extracted from sugoijan/ditoditoinfinito tools/skin-studio,
+commit ff480ff. Runtime assets are supplied by the pinned DDI dependency.

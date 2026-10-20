@@ -1,0 +1,66 @@
+[package]
+name = "ddi-skin-studio"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "SkinCraft native noteskin editor with vector, raster and live game preview"
+
+[features]
+default = ["skincraft"]
+skincraft = ["dep:vectorcraft-ui-egui", "dep:vectorcraft-engine", "dep:vectorcraft-doc", "dep:vectorcraft-svg", "dep:vectorcraft-format", "eframe/x11", "eframe/wayland", "dep:rfd", "dep:photocraft-automation", "dep:rmcp", "dep:schemars", "dep:tokio", "dep:base64"]
+
+[[bin]]
+name = "skincraft"
+path = "src/main.rs"
+required-features = ["skincraft"]
+
+[workspace]
+resolver = "3"
+
+[dependencies]
+rfd = { version = "0.17.2", optional = true }
+photocraft-automation = { git = "https://github.com/sugoijan/photocraft.git", rev = "d42b44adb1970afb393593ceb0e0079ff3e68ad1", optional = true }
+rmcp = { version = "3.5.1", optional = true, default-features = false, features = ["server", "macros", "transport-io"] }
+schemars = { version = "1", optional = true }
+tokio = { version = "1", optional = true, features = ["rt-multi-thread", "macros", "io-std", "sync", "net", "io-util", "time", "fs"] }
+base64 = { version = "0.22", optional = true }
+vectorcraft-ui-egui = { git = "https://github.com/sugoijan/vectorcraft.git", rev = "9e7929ee8966977e6daf200f457c570f7aaf7c51", optional = true }
+vectorcraft-engine = { git = "https://github.com/sugoijan/vectorcraft.git", rev = "9e7929ee8966977e6daf200f457c570f7aaf7c51", optional = true, default-features = false }
+vectorcraft-doc = { git = "https://github.com/sugoijan/vectorcraft.git", rev = "9e7929ee8966977e6daf200f457c570f7aaf7c51", optional = true }
+vectorcraft-svg = { git = "https://github.com/sugoijan/vectorcraft.git", rev = "9e7929ee8966977e6daf200f457c570f7aaf7c51", optional = true }
+vectorcraft-format = { git = "https://github.com/sugoijan/vectorcraft.git", rev = "9e7929ee8966977e6daf200f457c570f7aaf7c51", optional = true }
+ddi-chart = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c8708b8144d276b8b88761179dcb575dafbb47c5" }
+ddi-engine = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c8708b8144d276b8b88761179dcb575dafbb47c5" }
+ddi-render = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c8708b8144d276b8b88761179dcb575dafbb47c5" }
+ddi-noteskin = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c8708b8144d276b8b88761179dcb575dafbb47c5" }
+ddi-desktop = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c8708b8144d276b8b88761179dcb575dafbb47c5", default-features = false }
+photocraft-ui-egui = { git = "https://github.com/sugoijan/photocraft.git", rev = "d42b44adb1970afb393593ceb0e0079ff3e68ad1" }
+photocraft-format = { git = "https://github.com/sugoijan/photocraft.git", rev = "d42b44adb1970afb393593ceb0e0079ff3e68ad1" }
+photocraft-doc = { git = "https://github.com/sugoijan/photocraft.git", rev = "d42b44adb1970afb393593ceb0e0079ff3e68ad1" }
+photocraft-compose = { git = "https://github.com/sugoijan/photocraft.git", rev = "d42b44adb1970afb393593ceb0e0079ff3e68ad1" }
+photocraft-engine = { git = "https://github.com/sugoijan/photocraft.git", rev = "d42b44adb1970afb393593ceb0e0079ff3e68ad1" }
+photocraft-cms = { git = "https://github.com/sugoijan/photocraft.git", rev = "d42b44adb1970afb393593ceb0e0079ff3e68ad1" }
+photocraft-color = { git = "https://github.com/sugoijan/photocraft.git", rev = "d42b44adb1970afb393593ceb0e0079ff3e68ad1" }
+photocraft-io = { git = "https://github.com/sugoijan/photocraft.git", rev = "d42b44adb1970afb393593ceb0e0079ff3e68ad1" }
+eframe = { version = "0.36", default-features = false, features = ["wgpu"] }
+egui = { version = "0.36", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+egui_kittest = { version = "0.36", features = ["wgpu", "snapshot", "eframe"] }
+
+[profile.dev]
+opt-level = 1
+debug = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+# VectorCraft's PDF facade must use its matching shared backend when embedded.
+[patch.crates-io]
+hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
+hayro-interpret = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
+hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
