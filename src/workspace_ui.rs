@@ -54,6 +54,7 @@ impl Panel {
                 ));
             }
         }
+        self.preview_parameters = state.preview_parameters;
         self.editor.edits = state.texts;
         #[cfg(feature = "skincraft")]
         if let Some(vector) = &mut self.vector {
@@ -72,7 +73,12 @@ impl Panel {
             .or_else(|| self.editor.tabs.last().cloned());
         self.editor.visible = !self.editor.tabs.is_empty();
         self.pending_open = state.open;
-        if !self.editor.edits.is_empty() {
+        if !self.editor.edits.is_empty()
+            || self
+                .project
+                .as_ref()
+                .is_some_and(|p| p.values != self.preview_parameters)
+        {
             self.text_reload = Some(Instant::now() - std::time::Duration::from_secs(1));
         }
         // Closed documents still feed their saved pixels into the preview.
@@ -118,23 +124,21 @@ impl Panel {
                 .unwrap_or_default(),
         };
         #[cfg(not(feature = "skincraft"))]
-        workspace::save(
-            &dir,
-            &self.drawings,
-            &self.editor.edits,
-            open,
-            self.editor.tabs.clone(),
-            self.editor.active.clone(),
-        )?;
-        #[cfg(feature = "skincraft")]
+        let vectors = workspace::load(&dir)?
+            .map(|s| s.vectors)
+            .unwrap_or_default();
         workspace::save_full(
             &dir,
             &self.drawings,
-            &self.editor.edits,
-            open,
-            self.editor.tabs.clone(),
-            self.editor.active.clone(),
-            vectors,
+            workspace::State {
+                texts: self.editor.edits.clone(),
+                open,
+                text_tabs: self.editor.tabs.clone(),
+                active_text: self.editor.active.clone(),
+                vectors,
+                preview_parameters: self.preview_parameters.clone(),
+                ..Default::default()
+            },
         )?;
         self.workspace_dir = Some(dir);
         self.checkpoint_dirty = false;

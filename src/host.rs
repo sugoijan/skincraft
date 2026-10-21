@@ -975,6 +975,103 @@ mod integration_tests {
     }
 
     #[test]
+    fn parameter_controls_and_mcp_preserve_preview_and_project_choices() {
+        use ddi_noteskin::params::Value as ParamValue;
+        let root = crate::project::tests::parameter_fixture("parameter-controls");
+        let home = root.join("profile");
+        let mut h = harness(&home);
+        h.run_steps(3);
+        h.state_mut().load_skin(&root.join("dance/Test")).unwrap();
+        h.state_mut().panel.time = 1.25;
+        h.run_steps(3);
+        let before = super::super::tests::field_pixels(&h.state().panel);
+        let context = egui::Context::default();
+        let state = h.state_mut().request("preview", json!({"parameters":{"Colors":"Alternate","Explosions":false,"Size":1.6,"Tint":"#ff8800"}}), &context).unwrap();
+        assert_eq!(state["resolvedSkin"], "Alternate");
+        assert_eq!(state["parameters"].as_array().unwrap().len(), 4);
+        assert_eq!(state["previewParameters"]["Size"], 1.5);
+        assert_eq!(state["previewParameters"]["Tint"], "#FF8800");
+        assert_eq!(h.state().panel.time, 1.25);
+        h.run_steps(3);
+        let after = super::super::tests::field_pixels(&h.state().panel);
+        assert_ne!(before, after);
+        let params = h.state().panel.preview_parameters.clone();
+        for invalid in [
+            json!({"Size":true}),
+            json!({"Colors":"no-such-choice"}),
+            json!({"Size":2,"Unknown":false}),
+        ] {
+            assert!(
+                h.state_mut()
+                    .request("preview", json!({"parameters":invalid}), &context)
+                    .is_err()
+            );
+            assert_eq!(h.state().panel.preview_parameters, params);
+        }
+        // Both variants stay in the file browser, and the same parameter ids back UI and MCP.
+        assert!(h.state().panel.files.iter().any(|f| f.owner == "Alternate"));
+        h.state_mut().save_workspace().unwrap();
+        h.state_mut()
+            .load_skin(&ddi_desktop::images::assets().join("noteskins/dance/Dito"))
+            .unwrap();
+        let light = h
+            .state_mut()
+            .request(
+                "preview",
+                json!({"parameters":{"Lighter":true,"Colors":"Flat"}}),
+                &context,
+            )
+            .unwrap();
+        assert!(light["resolvedSkin"].is_null());
+        assert_eq!(
+            h.state().panel.options.note_colors,
+            ddi_render::ColorScheme::Flat
+        );
+        h.state_mut().load_skin(&root.join("dance/Test")).unwrap();
+        h.run_steps(3);
+        assert_eq!(h.state().panel.preview_parameters, params);
+        assert_eq!(h.state().inspect()["resolvedSkin"], "Alternate");
+        let shot =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/scratch/parameters/controls.png");
+        std::fs::create_dir_all(shot.parent().unwrap()).unwrap();
+        h.render().unwrap().save(shot).unwrap();
+        h.state_mut().save_workspace().unwrap();
+        drop(h);
+        let mut restored = harness(&home);
+        restored.run_steps(6);
+        assert_eq!(restored.state().panel.preview_parameters, params);
+        let reset = restored
+            .state_mut()
+            .request(
+                "preview",
+                json!({"parameters":{"Colors":null,"Explosions":null}}),
+                &context,
+            )
+            .unwrap();
+        assert_eq!(reset["resolvedSkin"], "Test");
+        assert!(
+            !restored
+                .state()
+                .panel
+                .preview_parameters
+                .contains_key("Colors")
+        );
+        assert_eq!(
+            restored
+                .state()
+                .panel
+                .preview
+                .noteskin()
+                .unwrap()
+                .parameters()
+                .get("Explosions"),
+            Some(&ParamValue::Bool(true))
+        );
+        drop(restored);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn native_save_dialogs_cancel_write_and_preserve_reference_documents() {
         let root = crate::project::tests::fixture("native-services");
         let home = root.join("profile");
@@ -1189,9 +1286,17 @@ mod integration_tests {
                 serde_json::from_str(preview["content"][0]["text"].as_str().unwrap()).unwrap();
             assert_eq!(preview["autoplayFlashes"], true);
             assert_eq!(preview["ruleset"], "danoni");
+            let parameters = call(
+                "set_preview",
+                json!({"autoplay_flashes":false,"ruleset":"itg","parameters":{"Colors":"Quantized","Explosions":false}}),
+            );
+            let parameters: Value =
+                serde_json::from_str(parameters["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(parameters["resolvedSkin"], "Dito");
+            assert_eq!(parameters["previewParameters"]["Explosions"], false);
             call(
                 "set_preview",
-                json!({"autoplay_flashes":false,"ruleset":"itg"}),
+                json!({"parameters":{"Colors":null,"Explosions":null}}),
             );
             let commands = call(
                 "editor_request",

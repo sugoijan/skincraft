@@ -45,6 +45,8 @@ pub struct PreviewParams {
     pub autoplay_flashes: Option<bool>,
     /// itg, danoni, sm5 or ddr-a.
     pub ruleset: Option<String>,
+    /// Parameter patch keyed by the ids from inspect_workspace. Null resets one to its default.
+    pub parameters: Option<std::collections::BTreeMap<String, Value>>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -189,12 +191,12 @@ impl SkinCraftMcp {
         self.call("export_skin", json!({"path":p.path})).await
     }
     #[tool(
-        description = "Pause/resume or seek the shared game preview, for repeatable artwork comparisons."
+        description = "Set declared skin parameters, pause/resume or seek the shared game preview. Parameters are preview choices; exported defaults stay unchanged."
     )]
     async fn set_preview(&self, Parameters(p): Parameters<PreviewParams>) -> CallToolResult {
         self.call(
             "preview",
-            json!({"running":p.running,"time":p.time,"autoplay_flashes":p.autoplay_flashes,"ruleset":p.ruleset}),
+            json!({"running":p.running,"time":p.time,"autoplay_flashes":p.autoplay_flashes,"ruleset":p.ruleset,"parameters":p.parameters}),
         )
         .await
     }

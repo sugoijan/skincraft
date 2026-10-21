@@ -179,6 +179,41 @@ The element inspector includes dropped hold/roll
 heads, tails and bodies when a skin opts into the third state.
 The coverage disclosure reports lane mappings and loader messages.
 
+## Skin parameters
+
+The preview reads the loaded skin's `[Parameters]` declarations (including
+fallback metrics) and shows choices, toggles, stepped numbers and color
+palettes under **Skin parameters**. Hover a label for its description; Reset
+returns a control to its declared default. Changes rebuild the same game
+preview at its current time. Invalid values are rejected; a failing reload
+keeps the last working preview.
+
+Color choices that name another skin load that variant through DDI's own
+resolver. The file browser and exports include all valid parameter variants
+and their fallbacks, including edits to an inactive variant. Switching a
+choice does not discard artwork or source drafts. Dito's base skin also
+previews its Lighter drawing using the game's settings bridge; the demo has
+no song-specific colors for its Songs' own colors toggle to change.
+
+Preview choices are saved per project and restored on reopening. They do
+not rewrite `metrics.ini` or change exported defaults: edit the declaration's
+`Default` to change what players initially see. Export retains the choices
+and every referenced variant.
+
+MCP `inspect_workspace` reports `parameters` (ids, labels, kinds, defaults,
+resolved values, choices and numeric ranges), `previewParameters` (overrides)
+and `resolvedSkin`. `set_preview` accepts a `parameters` patch, for example:
+
+```json
+{"parameters":{"Colors":"Quantized","Explosions":false}}
+```
+
+A null entry resets that parameter: `{"parameters":{"Colors":null}}`.
+Unknown ids and wrong value types reject the whole parameter patch. Numeric
+values clamp and snap through the game's declaration, and color values use
+`#RRGGBB` / `#RRGGBBAA`. Reconnect an existing MCP client after rebuilding the
+bridge so it discovers the extended tool schema.
+
 ## SVG editing
 
 Double-click Dito's `_down receptor.svg`. Its arrow is an opacity mask:
@@ -248,12 +283,11 @@ save artwork and restart the development build.
 This separate Cargo workspace is outside the game's ordinary checks:
 
 ```sh
-CARGO_TARGET_DIR="$PWD/target/photocraft" cargo build \
-  --manifest-path tools/skin-studio/Cargo.toml --features skincraft --bin skincraft
-CARGO_TARGET_DIR="$PWD/target/photocraft" cargo test \
-  --manifest-path tools/skin-studio/Cargo.toml --features skincraft --lib
-CARGO_TARGET_DIR="$PWD/target/photocraft" cargo clippy \
-  --manifest-path tools/skin-studio/Cargo.toml --features skincraft --all-targets -- -D warnings
+cargo build --release --locked --bin skincraft
+DDI_HOME="$PWD/target/scratch/home" \
+  PHOTOCRAFT_CONFIG_DIR="$PWD/target/scratch/photocraft" \
+  cargo test --release --locked --lib -- --test-threads=1
+cargo clippy --locked --all-targets -- -D warnings
 ```
 
 Dito SVG checks compare every bundled SVG before/after VectorCraft export.

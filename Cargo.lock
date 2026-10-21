@@ -266,7 +266,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -765,7 +765,7 @@ dependencies = [
  "maybe-owned",
  "rustix 1.1.5",
  "rustix-linux-procfs",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
  "winx",
 ]
 
@@ -1293,12 +1293,12 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 [[package]]
 name = "ddi-actor"
 version = "0.1.0"
-source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=0cff1515810f2fdb1648b3fe3731fd79b5b201ae#0cff1515810f2fdb1648b3fe3731fd79b5b201ae"
+source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=c41c68c8f23070c17406d5dc7158d1d3fe2e808f#c41c68c8f23070c17406d5dc7158d1d3fe2e808f"
 
 [[package]]
 name = "ddi-chart"
 version = "0.1.0"
-source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=0cff1515810f2fdb1648b3fe3731fd79b5b201ae#0cff1515810f2fdb1648b3fe3731fd79b5b201ae"
+source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=c41c68c8f23070c17406d5dc7158d1d3fe2e808f#c41c68c8f23070c17406d5dc7158d1d3fe2e808f"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -1307,7 +1307,7 @@ dependencies = [
 [[package]]
 name = "ddi-desktop"
 version = "0.1.0"
-source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=0cff1515810f2fdb1648b3fe3731fd79b5b201ae#0cff1515810f2fdb1648b3fe3731fd79b5b201ae"
+source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=c41c68c8f23070c17406d5dc7158d1d3fe2e808f#c41c68c8f23070c17406d5dc7158d1d3fe2e808f"
 dependencies = [
  "arboard",
  "block2 0.6.2",
@@ -1322,6 +1322,7 @@ dependencies = [
  "ddi-platform",
  "ddi-render",
  "ddi-session",
+ "ddi-shell",
  "ddi-theme",
  "ddi-ui",
  "dirs",
@@ -1341,13 +1342,14 @@ dependencies = [
  "serde",
  "serde_json",
  "wgpu",
+ "windows-sys 0.61.2",
  "winit",
 ]
 
 [[package]]
 name = "ddi-engine"
 version = "0.1.0"
-source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=0cff1515810f2fdb1648b3fe3731fd79b5b201ae#0cff1515810f2fdb1648b3fe3731fd79b5b201ae"
+source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=c41c68c8f23070c17406d5dc7158d1d3fe2e808f#c41c68c8f23070c17406d5dc7158d1d3fe2e808f"
 dependencies = [
  "ddi-chart",
  "ddi-platform",
@@ -1357,7 +1359,7 @@ dependencies = [
 [[package]]
 name = "ddi-library"
 version = "0.1.0"
-source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=0cff1515810f2fdb1648b3fe3731fd79b5b201ae#0cff1515810f2fdb1648b3fe3731fd79b5b201ae"
+source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=c41c68c8f23070c17406d5dc7158d1d3fe2e808f#c41c68c8f23070c17406d5dc7158d1d3fe2e808f"
 dependencies = [
  "ddi-chart",
  "ddi-engine",
@@ -1372,7 +1374,7 @@ dependencies = [
 [[package]]
 name = "ddi-lua"
 version = "0.1.0"
-source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=0cff1515810f2fdb1648b3fe3731fd79b5b201ae#0cff1515810f2fdb1648b3fe3731fd79b5b201ae"
+source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=c41c68c8f23070c17406d5dc7158d1d3fe2e808f#c41c68c8f23070c17406d5dc7158d1d3fe2e808f"
 dependencies = [
  "lunita",
 ]
@@ -1380,7 +1382,7 @@ dependencies = [
 [[package]]
 name = "ddi-noteskin"
 version = "0.1.0"
-source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=0cff1515810f2fdb1648b3fe3731fd79b5b201ae#0cff1515810f2fdb1648b3fe3731fd79b5b201ae"
+source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=c41c68c8f23070c17406d5dc7158d1d3fe2e808f#c41c68c8f23070c17406d5dc7158d1d3fe2e808f"
 dependencies = [
  "ddi-actor",
  "ddi-chart",
@@ -1391,7 +1393,7 @@ dependencies = [
 [[package]]
 name = "ddi-platform"
 version = "0.1.0"
-source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=0cff1515810f2fdb1648b3fe3731fd79b5b201ae#0cff1515810f2fdb1648b3fe3731fd79b5b201ae"
+source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=c41c68c8f23070c17406d5dc7158d1d3fe2e808f#c41c68c8f23070c17406d5dc7158d1d3fe2e808f"
 dependencies = [
  "ddi-chart",
  "rubato",
@@ -1404,12 +1406,13 @@ dependencies = [
 [[package]]
 name = "ddi-render"
 version = "0.1.0"
-source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=0cff1515810f2fdb1648b3fe3731fd79b5b201ae#0cff1515810f2fdb1648b3fe3731fd79b5b201ae"
+source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=c41c68c8f23070c17406d5dc7158d1d3fe2e808f#c41c68c8f23070c17406d5dc7158d1d3fe2e808f"
 dependencies = [
  "bytemuck",
  "ddi-actor",
  "ddi-chart",
  "ddi-engine",
+ "ddi-library",
  "ddi-lua",
  "ddi-noteskin",
  "glyphon",
@@ -1419,15 +1422,34 @@ dependencies = [
 [[package]]
 name = "ddi-session"
 version = "0.1.0"
-source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=0cff1515810f2fdb1648b3fe3731fd79b5b201ae#0cff1515810f2fdb1648b3fe3731fd79b5b201ae"
+source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=c41c68c8f23070c17406d5dc7158d1d3fe2e808f#c41c68c8f23070c17406d5dc7158d1d3fe2e808f"
 dependencies = [
+ "ddi-actor",
  "ddi-chart",
  "ddi-engine",
  "ddi-library",
+ "ddi-lua",
+ "ddi-noteskin",
  "ddi-platform",
  "ddi-ui",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ddi-shell"
+version = "0.1.0"
+source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=c41c68c8f23070c17406d5dc7158d1d3fe2e808f#c41c68c8f23070c17406d5dc7158d1d3fe2e808f"
+dependencies = [
+ "ddi-actor",
+ "ddi-chart",
+ "ddi-engine",
+ "ddi-library",
+ "ddi-noteskin",
+ "ddi-render",
+ "ddi-session",
+ "ddi-ui",
+ "wgpu",
 ]
 
 [[package]]
@@ -1440,6 +1462,8 @@ dependencies = [
  "ddi-engine",
  "ddi-noteskin",
  "ddi-render",
+ "ddi-shell",
+ "ddi-ui",
  "eframe",
  "egui",
  "egui_kittest",
@@ -1469,7 +1493,7 @@ dependencies = [
 [[package]]
 name = "ddi-theme"
 version = "0.1.0"
-source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=0cff1515810f2fdb1648b3fe3731fd79b5b201ae#0cff1515810f2fdb1648b3fe3731fd79b5b201ae"
+source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=c41c68c8f23070c17406d5dc7158d1d3fe2e808f#c41c68c8f23070c17406d5dc7158d1d3fe2e808f"
 dependencies = [
  "ddi-actor",
  "ddi-ui",
@@ -1480,12 +1504,13 @@ dependencies = [
 [[package]]
 name = "ddi-ui"
 version = "0.1.0"
-source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=0cff1515810f2fdb1648b3fe3731fd79b5b201ae#0cff1515810f2fdb1648b3fe3731fd79b5b201ae"
+source = "git+https://github.com/sugoijan/ditoditoinfinito.git?rev=c41c68c8f23070c17406d5dc7158d1d3fe2e808f#c41c68c8f23070c17406d5dc7158d1d3fe2e808f"
 dependencies = [
  "ddi-actor",
  "ddi-chart",
  "ddi-engine",
  "ddi-library",
+ "ddi-noteskin",
  "ddi-platform",
  "serde",
  "serde_json",
@@ -1557,7 +1582,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1907,7 +1932,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4420,7 +4445,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5321,7 +5346,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5829,7 +5854,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5896,7 +5921,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6562,7 +6587,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6709,7 +6734,7 @@ version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c2499c2d826531388872b2268718aed907a39bd785ab0dcfe57fab26283f92e"
 dependencies = [
- "skrifa 0.42.1",
+ "skrifa 0.44.0",
  "yazi",
  "zeno",
 ]
@@ -6951,7 +6976,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7359,7 +7384,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8486,7 +8511,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

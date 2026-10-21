@@ -22,6 +22,8 @@ mod host;
 #[cfg(feature = "skincraft")]
 #[path = "native.rs"]
 mod native;
+#[path = "parameters.rs"]
+mod parameters;
 #[path = "references.rs"]
 #[cfg(feature = "skincraft")]
 mod references;
@@ -93,6 +95,8 @@ pub struct Panel {
     editor: text::Editor,
     applied_texts: HashMap<PathBuf, String>,
     rollback_texts: Option<HashMap<PathBuf, String>>,
+    rollback_parameters: ddi_noteskin::params::Values,
+    preview_parameters: ddi_noteskin::params::Values,
     rollback_problems: Vec<String>,
     drawings: HashMap<PathBuf, photocraft_engine::DocState>,
     sizes: HashMap<PathBuf, [u32; 2]>,
@@ -170,6 +174,8 @@ impl Panel {
             editor: Default::default(),
             applied_texts: HashMap::new(),
             rollback_texts: None,
+            rollback_parameters: Default::default(),
+            preview_parameters: Default::default(),
             rollback_problems: Vec::new(),
             drawings: HashMap::new(),
             sizes: HashMap::new(),
@@ -226,6 +232,19 @@ impl Panel {
             .project
             .as_ref()
             .is_none_or(|old| old.dir != original.dir);
+        let values = if changed_project {
+            self.home
+                .as_ref()
+                .map(|home| workspace::load(&workspace::dir(home, &original.dir)))
+                .transpose()?
+                .flatten()
+                .map(|state| state.preview_parameters)
+                .unwrap_or_default()
+        } else {
+            self.preview_parameters.clone()
+        };
+        let mut original = original;
+        original.values = values;
         let (project, prepared) = if !changed_project && !self.editor.edits.is_empty() {
             original.prepare_texts(
                 &layout,
@@ -234,10 +253,9 @@ impl Panel {
                 &self.candidate_dir(),
             )?
         } else {
-            (
-                original.clone(),
-                original.prepare(&layout, self.options.play.scroll.reverse)?,
-            )
+            let selected = original.clone().with_parameters(&original.values);
+            let prepared = selected.prepare(&layout, self.options.play.scroll.reverse)?;
+            (selected, prepared)
         };
         let files = files::inventory(&project)?;
         if changed_project {
@@ -270,12 +288,33 @@ impl Panel {
         let device = &self.rs.device;
         let queue = &self.rs.queue;
         self.options.layout = self.layout.clone();
+        // Dito's host-owned choices use the same settings bridge as the game.
+        // The demo has no song-specific colors; ChartColors therefore has no effect here.
+        let lighter = if project
+            .skins
+            .first()
+            .is_some_and(|s| s.game == "dance" && s.name == "Dito")
+        {
+            let mut settings = ddi_ui::state::settings::Settings::default();
+            settings.skin_params.insert(
+                ddi_noteskin::bundled::DITO.into(),
+                project.parameters.resolve(&project.values),
+            );
+            self.options.note_colors = ddi_shell::note_scheme(settings.note_colors());
+            settings.lighter()
+        } else {
+            self.options.note_colors = Default::default();
+            false
+        };
         self.preview.set_options(self.options.clone());
         self.duration =
             ddi_engine::demo::Demo::new(&self.layout, ddi_render::field_preview::BPM, 1.0)
                 .map_or(32.0, |d| d.length());
-        self.preview
-            .set_noteskin(device, queue, Some(prepared.play), |renderer, play| {
+        self.preview.set_noteskin(
+            device,
+            queue,
+            (!lighter).then_some(prepared.play),
+            |renderer, play| {
                 let keys = play.texture_keys().to_vec();
                 for (i, key) in keys.iter().enumerate() {
                     let id = match key {
@@ -329,14 +368,25 @@ impl Panel {
                     };
                     play.set_texture(i, id);
                 }
-            });
+            },
+        );
         self.assets = assets;
         self.selected = self.selected.min(self.assets.len().saturating_sub(1));
         self.files = files;
         self.thumbnails.clear();
         self.thumbnail_failed.clear();
+        let previous_values = self
+            .project
+            .as_ref()
+            .map(|p| p.values.clone())
+            .unwrap_or_default();
+        self.preview_parameters = project.values.clone();
         self.project = Some(project);
-        if self.applied_texts != self.editor.edits {
+        if !changed_project
+            && (self.applied_texts != self.editor.edits
+                || previous_values != self.preview_parameters)
+        {
+            self.rollback_parameters = previous_values;
             self.rollback_texts = Some(self.applied_texts.clone());
             self.rollback_problems = previous_problems;
         }
@@ -490,6 +540,7 @@ impl Panel {
                 }
             }
         });
+        self.parameter_controls(ui);
         let before_layout = self.layout.clone();
         egui::ComboBox::from_label("Layout")
             .selected_text(&self.layout)
@@ -701,8 +752,13 @@ impl Panel {
         }) {
             if let Some(previous) = self.rollback_texts.take() {
                 let drafts = std::mem::replace(&mut self.editor.edits, previous);
+                let values = std::mem::replace(
+                    &mut self.preview_parameters,
+                    self.rollback_parameters.clone(),
+                );
                 let restored = self.load();
                 self.editor.edits = drafts;
+                self.preview_parameters = values;
                 self.rollback_texts = None;
                 self.failure = Some(match restored {
                     Ok(()) => format!("{error} (last working preview restored)"),
@@ -827,7 +883,12 @@ impl Panel {
         if self.vector.as_ref().is_some_and(|v| !v.errors.is_empty()) {
             return true;
         }
-        self.text_reload.is_some() || self.editor.edits != self.applied_texts
+        self.text_reload.is_some()
+            || self.editor.edits != self.applied_texts
+            || self
+                .project
+                .as_ref()
+                .is_some_and(|p| p.values != self.preview_parameters)
     }
 
     fn save_project(&mut self, app: &PhotocraftApp) -> Result<(), String> {
@@ -965,6 +1026,9 @@ impl PanelExtension for Panel {
             "time": self.time, "frames": self.preview.frames(), "updates": self.updates,
             "autoplayFlashes": self.options.autoplay_flashes,
             "ruleset": self.options.rules.id,
+            "parameters": self.parameter_info(),
+            "previewParameters": self.preview_parameters,
+            "resolvedSkin": self.preview.noteskin().map(|skin| &skin.name),
             "updateMs": self.update_ms, "failure": self.failure, "textures": self.assets.len(),
             "selected": self.selected, "bindings": self.bindings.len(),
             "coverage": self.project.as_ref().map(|p| &p.coverage),

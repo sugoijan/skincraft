@@ -14,3 +14,8 @@ DDI's actual noteskin renderer. Read README.md and docs/architecture.md.
 - Verify local overrides before pushing, then repeat with pinned Git dependencies.
 - Do not overwrite original skin resources; maintain draft/last-valid-preview behavior.
 - Keep user checkpoints, profiles, screenshots, caches and local patches ignored.
+
+- Skin parameters use DDI's declarations and resolver. Preview choices are
+  project checkpoint data, never edits to runtime defaults. Inventory and
+  exports retain every valid parameter variant and its fallback files.
+  MCP preview changes and the UI use the same validation/reload path.

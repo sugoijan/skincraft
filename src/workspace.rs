@@ -20,6 +20,8 @@ pub struct State {
     pub revisions: HashMap<PathBuf, (u64, u64)>,
     #[serde(default)]
     pub vectors: Vec<VectorSource>,
+    #[serde(default)]
+    pub preview_parameters: ddi_noteskin::params::Values,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -50,7 +52,7 @@ pub fn atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 /// Write changed layered documents before committing the manifest. Generation filenames keep
 /// the previous manifest usable if a write fails halfway through the checkpoint.
-#[cfg(any(not(feature = "skincraft"), test))]
+#[cfg(test)]
 pub fn save(
     dir: &Path,
     docs: &HashMap<PathBuf, DocState>,
@@ -63,36 +65,28 @@ pub fn save(
     save_full(
         dir,
         docs,
-        texts,
-        open,
-        text_tabs,
-        active_text,
-        previous.vectors,
+        State {
+            texts: texts.clone(),
+            open,
+            text_tabs,
+            active_text,
+            vectors: previous.vectors,
+            preview_parameters: previous.preview_parameters,
+            ..Default::default()
+        },
     )
 }
 
 pub fn save_full(
     dir: &Path,
     docs: &HashMap<PathBuf, DocState>,
-    texts: &HashMap<PathBuf, String>,
-    open: Vec<PathBuf>,
-    text_tabs: Vec<PathBuf>,
-    active_text: Option<PathBuf>,
-    vectors: Vec<VectorSource>,
+    mut state: State,
 ) -> Result<(), String> {
     let generation = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_nanos();
     let previous = load(dir)?.unwrap_or_default();
-    let mut state = State {
-        texts: texts.clone(),
-        open,
-        text_tabs,
-        active_text,
-        vectors,
-        ..Default::default()
-    };
     for (source, doc) in docs {
         state
             .revisions
@@ -142,7 +136,9 @@ pub fn load(dir: &Path) -> Result<Option<State>, String> {
     }
     let state: State = serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
-    if state.drawings.len() > 128
+    if state.preview_parameters.len() > ddi_noteskin::params::MAX_PARAMETERS
+        || state.preview_parameters.iter().any(|(k,v)| k.len() > ddi_noteskin::params::MAX_NAME || matches!(v, ddi_noteskin::params::Value::Text(t) if t.len() > ddi_noteskin::params::MAX_NAME))
+        || state.drawings.len() > 128
         || state.vectors.len() > 128
         || state.vectors.iter().any(|v| v.svg.len() > 1 << 20)
         || state.texts.len() > 256

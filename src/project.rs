@@ -5,6 +5,7 @@ use ddi_chart::Layout;
 use ddi_desktop::library::noteskins::DiskSkin;
 use ddi_desktop::play::{skins, view::Rgba};
 use ddi_noteskin::build::TextureKey;
+use ddi_noteskin::params::{self, Declared, Kind, Values};
 use ddi_noteskin::{Dir, Skin};
 
 #[derive(Clone)]
@@ -13,6 +14,8 @@ pub struct Project {
     pub skins: Vec<DiskSkin>,
     pub chain: Vec<usize>,
     pub coverage: Vec<String>,
+    pub parameters: Declared,
+    pub values: Values,
     layout: String,
 }
 
@@ -82,14 +85,8 @@ impl Project {
         }
         let folders: Vec<_> = skins.iter().map(skins::folder).collect();
         let skin = Skin::load(&folders, &chosen.game, &chosen.name).map_err(|e| e.to_string())?;
-        let mut chain = Vec::new();
-        for d in &skin.chain {
-            if let Dir::Folder(i) = *d
-                && !chain.contains(&i)
-            {
-                chain.push(i);
-            }
-        }
+        let chain = parameter_chain(&folders, &chosen.game, &chosen.name)?;
+        let parameters = Declared::of_skin(&folders, &chosen.game, &chosen.name);
         let coverage = layout
             .lanes
             .iter()
@@ -106,23 +103,26 @@ impl Project {
             skins,
             chain,
             coverage,
+            parameters,
+            values: Values::new(),
             layout: layout.id.clone(),
         })
     }
 
     pub fn prepare(&self, layout: &Layout, reversed: bool) -> Result<skins::Prepared, String> {
         let chosen = self.skins.first().ok_or("No skin selected")?;
-        let env = ddi_engine::demo::song(&layout.id, ddi_render::field_preview::BPM)
+        let mut env = ddi_engine::demo::song(&layout.id, ddi_render::field_preview::BPM)
             .and_then(|song| {
                 song.charts
                     .first()
-                    .map(|chart| skins::lua_env(&song, chart, layout, reversed))
+                    .map(|chart| ddi_noteskin::lua::chart_env(&song, chart, layout, reversed))
             })
             .unwrap_or_else(|| ddi_noteskin::lua::Env {
                 reversed,
                 columns: layout.lanes.len() as u32,
                 ..Default::default()
             });
+        env.params = self.values.clone();
         let prepared = skins::prepare_authoring(&chosen.key(), layout, env, &self.skins)
             .ok_or_else(|| {
                 "The game's loader could not build this skin; check its Lua and fallback folders"
@@ -132,6 +132,36 @@ impl Project {
             return Err(error.clone());
         }
         Ok(prepared)
+    }
+
+    pub fn with_parameters(mut self, values: &Values) -> Self {
+        self.values = self.parameters.resolve(values);
+        self.values.retain(|name, value| {
+            self.parameters
+                .get(name)
+                .is_some_and(|p| &p.default != value)
+        });
+        let folders: Vec<_> = self.skins.iter().map(skins::folder).collect();
+        if let Some(chosen) = self.skins.first() {
+            let head = params::head(&folders, &chosen.game, &chosen.name, &self.values);
+            if let (Ok(skin), Some(layout)) = (
+                Skin::load(&folders, &chosen.game, &head),
+                Layout::builtin(&self.layout),
+            ) {
+                self.coverage = layout
+                    .lanes
+                    .iter()
+                    .map(|lane| {
+                        let button = skin
+                            .lane_button(lane)
+                            .map(|b| b.button.name())
+                            .unwrap_or("unavailable");
+                        format!("{} → {button}", lane.name)
+                    })
+                    .collect();
+            }
+        }
+        self
     }
 
     pub fn source(&self, key: &TextureKey) -> Option<PathBuf> {
@@ -391,16 +421,9 @@ impl Project {
             }
         }
         let chosen = self.skins.first().ok_or("Missing skin")?;
-        let skin = Skin::load(&folders, &chosen.game, &chosen.name).map_err(|e| e.to_string())?;
         let mut next = self.clone();
-        next.chain.clear();
-        for dir in &skin.chain {
-            if let Dir::Folder(i) = dir
-                && !next.chain.contains(i)
-            {
-                next.chain.push(*i);
-            }
-        }
+        next.parameters = Declared::of_skin(&folders, &chosen.game, &chosen.name);
+        next.chain = parameter_chain(&folders, &chosen.game, &chosen.name)?;
         for i in &self.chain {
             if !next.chain.contains(i) {
                 next.chain.push(*i);
@@ -442,7 +465,8 @@ impl Project {
                     .join(&selected.game)
                     .join(&selected.name),
                 layout,
-            )?;
+            )?
+            .with_parameters(&self.values);
             let prepared = project.prepare(layout, reverse)?;
             let new_errors: Vec<_> = prepared
                 .play
@@ -511,7 +535,8 @@ impl Project {
                     .join(&selected.game)
                     .join(&selected.name),
                 &Layout::builtin(&self.layout).ok_or("Unknown layout")?,
-            )?;
+            )?
+            .with_parameters(&self.values);
             let ready = p.prepare(
                 &Layout::builtin(&self.layout).ok_or("Unknown layout")?,
                 false,
@@ -548,6 +573,7 @@ impl Project {
                 .join(&selected.name),
             &layout,
         )?
+        .with_parameters(&self.values)
         .prepare(&layout, false)?;
         if before.play.runs_lua() != after.play.runs_lua()
             || after.images.iter().flatten().count() < before.images.iter().flatten().count()
@@ -561,6 +587,44 @@ impl Project {
         }
         Ok(())
     }
+}
+
+fn parameter_chain(
+    folders: &[ddi_noteskin::Folder],
+    game: &str,
+    name: &str,
+) -> Result<Vec<usize>, String> {
+    let mut names = vec![name.to_string()];
+    let mut chain = Vec::new();
+    let mut cursor = 0;
+    while cursor < names.len() {
+        let name = names[cursor].clone();
+        cursor += 1;
+        let skin = Skin::load(folders, game, &name).map_err(|e| e.to_string())?;
+        for dir in skin.chain {
+            if let Dir::Folder(i) = dir
+                && !chain.contains(&i)
+            {
+                chain.push(i);
+            }
+        }
+        for parameter in Declared::of_skin(folders, game, &name).parameters {
+            if let Kind::Choice(choices) = parameter.kind {
+                for choice in choices {
+                    if choice.skin.is_none() {
+                        continue;
+                    }
+                    let values =
+                        Values::from([(parameter.name.clone(), params::Value::Text(choice.id))]);
+                    let head = params::head(folders, game, &name, &values);
+                    if !names.iter().any(|n| n.eq_ignore_ascii_case(&head)) {
+                        names.push(head);
+                    }
+                }
+            }
+        }
+    }
+    Ok(chain)
 }
 
 fn png_destination(source: &Path, destination: &Path) -> Result<PathBuf, String> {
@@ -668,6 +732,98 @@ pub(crate) mod tests {
         root.canonicalize().unwrap()
     }
 
+    pub fn parameter_fixture(label: &str) -> PathBuf {
+        let root = fixture(label);
+        let base = root.join("dance/Test");
+        let alternate = root.join("dance/Alternate");
+        std::fs::rename(
+            base.join("Down Tap Note.png"),
+            base.join("_Tap texture.png"),
+        )
+        .unwrap();
+        std::fs::create_dir(&alternate).unwrap();
+        std::fs::write(base.join("metrics.ini"), "[Global]\nFallbackNoteSkin=default\n[Parameters]\nList=Colors,Explosions,Size,Tint\n[Parameter Colors]\nType=Choice\nLabel=Note colors\nChoices=Normal,Alternate\nSkins=,Alternate\nDefault=Normal\n[Parameter Explosions]\nType=Toggle\nDefault=1\n[Parameter Size]\nType=Number\nMin=0.5\nMax=2\nStep=0.25\nDefault=1\n[Parameter Tint]\nType=Color\nDefault=#FFFFFF\nChoices=#FFFFFF,#FF8800\n").unwrap();
+        std::fs::write(
+            alternate.join("metrics.ini"),
+            "[Global]\nFallbackNoteSkin=Test\n",
+        )
+        .unwrap();
+        std::fs::write(
+            alternate.join("_Tap texture.png"),
+            png_bytes(&Rgba {
+                size: [64, 64],
+                data: [40, 80, 240, 255].repeat(64 * 64),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(base.join("Down Tap Note.lua"), "return Def.Sprite {Texture=NOTESKIN:GetPath('_Tap','texture.png'), InitCommand=function(self) self:zoom(NOTESKIN:GetParameter('Size')):diffuse(NOTESKIN:GetParameter('Tint')) end}").unwrap();
+        root
+    }
+
+    #[test]
+    fn parameters_select_variants_keep_drafts_and_export_all_choices() {
+        let root = parameter_fixture("parameters");
+        let base = root.join("dance/Test");
+        let layout = Layout::dance_single();
+        let p = Project::open(&base, &layout).unwrap();
+        assert_eq!(p.parameters.parameters.len(), 4);
+        let inventory = crate::files::inventory(&p).unwrap();
+        assert!(inventory.iter().any(|f| f.owner == "Alternate" && f.image));
+        let values = Values::from([
+            ("Colors".into(), params::Value::Text("Alternate".into())),
+            ("Size".into(), params::Value::Number(1.5)),
+        ]);
+        let p = p.with_parameters(&values);
+        let ready = p.prepare(&layout, false).unwrap();
+        assert_eq!(ready.play.name, "Alternate");
+        assert_eq!(
+            ready.play.parameters().get("Size"),
+            Some(&params::Value::Number(1.5))
+        );
+        let metrics = base.join("metrics.ini");
+        let text = std::fs::read_to_string(&metrics).unwrap();
+        let texts = HashMap::from([(
+            metrics.clone(),
+            format!("{text}\n[Parameter Size]\nDefault=1.25\n"),
+        )]);
+        let (edited, ready) = p
+            .prepare_texts(&layout, false, &texts, &root.join("candidate"))
+            .unwrap();
+        assert_eq!(ready.play.name, "Alternate");
+        assert_eq!(
+            ready.play.parameters().get("Size"),
+            Some(&params::Value::Number(1.5))
+        );
+        assert_eq!(
+            edited.parameters.get("Size").unwrap().default,
+            params::Value::Number(1.25)
+        );
+        assert_eq!(std::fs::read_to_string(metrics).unwrap(), text);
+        let out = root.join("runtime");
+        edited.export_texts(&out, &HashMap::new(), &texts).unwrap();
+        assert!(
+            out.join("NoteSkins/dance/Alternate/_Tap texture.png")
+                .is_file()
+        );
+        let exported = Project::open(&out.join("NoteSkins/dance/Test"), &layout).unwrap();
+        assert_eq!(
+            exported.prepare(&layout, false).unwrap().play.name,
+            "Test",
+            "preview selection must not change exported defaults"
+        );
+        assert_eq!(
+            exported
+                .with_parameters(&values)
+                .prepare(&layout, false)
+                .unwrap()
+                .play
+                .name,
+            "Alternate"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn onigiri_extension_preserves_original_and_loads_its_own_art() {
         let root = fixture("onigiri");
@@ -753,6 +909,10 @@ pub(crate) mod tests {
             &layout,
         )
         .unwrap();
+        let p = p.with_parameters(&Values::from([(
+            "Colors".into(),
+            params::Value::Text("Quantized".into()),
+        )]));
         let read = p.prepare(&layout, false).unwrap();
         let (key, image) = read
             .play

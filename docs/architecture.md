@@ -252,3 +252,19 @@ facade (`skincraft mcp`, `mcp.sh`): native commands/pointer input, source drafts
 project saves, copies, runtime export and whole-window captures. A real MCP
 client and native dialog continuations are covered by offscreen tests. Dito's generated
 bundled sources remain untouched.
+
+## Declared parameters (2026-10-22)
+
+SkinCraft pins DDI's published parameter API. `Project` reads merged
+`Declared` controls and collects the valid choice variants with their
+fallbacks, so inactive assets remain editable and exports stay complete.
+Preview values enter `Env::params`; DDI selects the drawing skin itself.
+Candidate text trees carry the same values and rebuild declarations from
+edited metrics. Their temporary paths map back to original file identities.
+
+`parameters.rs` owns UI controls, inspect metadata and atomic parameter
+patch validation for MCP. Project checkpoints store preview overrides with
+source drafts; exported metrics retain their authored defaults. Parameter
+reloads keep the demo time, and failed load/update paths retain or restore
+the previous preview. Dito's host-owned Lighter/color behavior goes through
+`ddi-ui` and `ddi-shell`, while other skins receive their values in Lua.

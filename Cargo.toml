@@ -29,11 +29,13 @@ vectorcraft-engine = { git = "https://github.com/sugoijan/vectorcraft.git", rev 
 vectorcraft-doc = { git = "https://github.com/sugoijan/vectorcraft.git", rev = "9e7929ee8966977e6daf200f457c570f7aaf7c51", optional = true }
 vectorcraft-svg = { git = "https://github.com/sugoijan/vectorcraft.git", rev = "9e7929ee8966977e6daf200f457c570f7aaf7c51", optional = true }
 vectorcraft-format = { git = "https://github.com/sugoijan/vectorcraft.git", rev = "9e7929ee8966977e6daf200f457c570f7aaf7c51", optional = true }
-ddi-chart = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "0cff1515810f2fdb1648b3fe3731fd79b5b201ae" }
-ddi-engine = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "0cff1515810f2fdb1648b3fe3731fd79b5b201ae" }
-ddi-render = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "0cff1515810f2fdb1648b3fe3731fd79b5b201ae" }
-ddi-noteskin = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "0cff1515810f2fdb1648b3fe3731fd79b5b201ae" }
-ddi-desktop = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "0cff1515810f2fdb1648b3fe3731fd79b5b201ae", default-features = false }
+ddi-chart = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f" }
+ddi-engine = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f" }
+ddi-render = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f" }
+ddi-noteskin = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f" }
+ddi-shell = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f" }
+ddi-ui = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f" }
+ddi-desktop = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f", default-features = false }
 photocraft-ui-egui = { git = "https://github.com/sugoijan/photocraft.git", rev = "d42b44adb1970afb393593ceb0e0079ff3e68ad1" }
 photocraft-format = { git = "https://github.com/sugoijan/photocraft.git", rev = "d42b44adb1970afb393593ceb0e0079ff3e68ad1" }
 photocraft-doc = { git = "https://github.com/sugoijan/photocraft.git", rev = "d42b44adb1970afb393593ceb0e0079ff3e68ad1" }

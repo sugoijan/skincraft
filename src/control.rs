@@ -259,12 +259,16 @@ impl host::SkinCraft {
             "export_skin" => { let p=path()?; self.check_write(&p)?; self.export_skin(&p)?; Ok(json!({"path":p})) }
             "save_file" => { let p=path()?; self.check_write(&p)?; self.save_copy(&p)?; Ok(json!({"path":p})) }
             "preview" => {
-                if let Some(id)=params["ruleset"].as_str(){
-                    self.panel.options.rules=super::preview_rules(id).ok_or("Unknown preview ruleset")?;
+                let rules = params["ruleset"].as_str().map(|id| super::preview_rules(id).ok_or("Unknown preview ruleset")).transpose()?;
+                let time = params["time"].as_f64();
+                if time.is_some_and(|t| !t.is_finite() || t < 0.0) { return Err("Invalid time".into()); }
+                if let Some(values)=params.get("parameters").filter(|v| !v.is_null()) {
+                    self.panel.set_parameters(serde_json::from_value(values.clone()).map_err(|e| format!("Invalid parameter patch: {e}"))?)?;
                 }
+                if let Some(rules)=rules {self.panel.options.rules=rules;}
                 if let Some(auto)=params["autoplay_flashes"].as_bool(){self.panel.options.autoplay_flashes=auto;}
                 if let Some(run)=params["running"].as_bool(){self.panel.running=run;}
-                if let Some(time)=params["time"].as_f64(){if !time.is_finite() || time<0.0{return Err("Invalid time".into());} self.panel.time=time.min(self.panel.duration);}
+                if let Some(time)=time {self.panel.time=time.min(self.panel.duration);}
                 Ok(self.inspect())
             }
             "screenshot" => {
