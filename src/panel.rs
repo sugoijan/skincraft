@@ -28,6 +28,9 @@ mod parameters;
 #[cfg(feature = "skincraft")]
 mod references;
 #[cfg(feature = "skincraft")]
+#[path = "theme.rs"]
+pub mod theme;
+#[cfg(feature = "skincraft")]
 #[path = "vector.rs"]
 mod vector;
 #[path = "workspace_ui.rs"]

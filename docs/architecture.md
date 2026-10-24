@@ -277,3 +277,17 @@ UI: the noteskin panel and MCP can open a tab after native logic ran. The status
 bar indexes the active document’s view, so stale view counts otherwise panic
 on reopening a reference-heavy project. The native save/restore integration
 test asserts one view per restored document before its first paint.
+
+## One theme over both editors (2026-10-24)
+
+PhotoCraft and VectorCraft each install their own theme on their first frame
+(visuals, spacing, text styles, fonts and the colour tokens their custom
+painting reads), so the window used to change character with the active
+editor and with the order the editors first ran. `src/theme.rs` owns the
+look instead: every frame, after the active editor's logic, SkinCraft writes
+both editors' tokens (`photocraft-theme` and VectorCraft's `Id::NULL` store)
+from one palette, the game's own Infinito colours, dark or light with the
+system, keeps one egui style, and restores PhotoCraft's fonts (with its
+on-demand script fallbacks) when VectorCraft replaces the font table, adding
+the family names both draw in. `one_theme_whichever_editor_is_active`
+checks SkinCraft's chrome draws the same pixels with either editor active.

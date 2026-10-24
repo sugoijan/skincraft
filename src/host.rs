@@ -7,6 +7,7 @@ pub struct SkinCraft {
     pub(super) photo: PhotocraftApp,
     pub(super) panel: Panel,
     fonts_ready: bool,
+    theme: super::theme::Theme,
     pub(super) native: Option<native::Runtime>,
     pub(super) control: Option<control::Server>,
     pub(super) captures: Vec<control::Capture>,
@@ -78,6 +79,7 @@ impl SkinCraft {
             photo,
             panel,
             fonts_ready: false,
+            theme: super::theme::Theme::new(),
             native: None,
             control: None,
             captures: Vec::new(),
@@ -276,39 +278,6 @@ pub(super) fn is_svg(path: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
 }
 
-/// Both native themes replace egui's global font definitions. Keep their named families
-/// available together, including after the other editor initializes or changes its theme.
-/// egui activates replacements next pass, so defer layout until the aliases are available.
-fn shared_fonts(ctx: &egui::Context) -> bool {
-    use egui::FontFamily::{Monospace, Name, Proportional};
-    let aliases = [
-        ("ui", Proportional),
-        ("ui-semibold", Name("semibold".into())),
-        ("mono", Monospace),
-        ("semibold", Name("ui-semibold".into())),
-        ("medium", Name("ui-semibold".into())),
-    ];
-    let mut fonts = ctx.fonts(|f| f.definitions().clone());
-    if aliases
-        .iter()
-        .all(|(name, _)| fonts.families.contains_key(&Name((*name).into())))
-    {
-        return true;
-    }
-    for (name, from) in aliases {
-        let stack = fonts
-            .families
-            .get(&from)
-            .or_else(|| fonts.families.get(&Proportional))
-            .cloned()
-            .unwrap_or_default();
-        fonts.families.entry(Name(name.into())).or_insert(stack);
-    }
-    ctx.set_fonts(fonts);
-    ctx.request_repaint();
-    false
-}
-
 impl App for SkinCraft {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
         self.capture_events(input);
@@ -339,7 +308,8 @@ impl App for SkinCraft {
         } else {
             self.photo.logic(ctx, frame);
         }
-        self.fonts_ready = shared_fonts(ctx);
+        // One look whichever editor is active (`theme.rs`): over what either installed.
+        self.fonts_ready = self.theme.enforce(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::Title("SkinCraft".into()));
     }
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -394,6 +364,71 @@ impl App for SkinCraft {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Switching between the vector and raster editors keeps one look (`theme.rs`): SkinCraft's
+    /// own chrome (the top bar, the file browser, the preview panel) draws the same pixels
+    /// whichever editor is active, as the editors' widgets read the same tokens.
+    #[test]
+    fn one_theme_whichever_editor_is_active() {
+        let root = crate::project::tests::fixture("theme");
+        let layout = Layout::builtin("dance-single").unwrap();
+        let original = ddi_desktop::images::assets().join("noteskins/dance/Dito");
+        Project::open(&original, &layout)
+            .unwrap()
+            .export(&root.join("copy"), &HashMap::new())
+            .unwrap();
+        let folder = root.join("copy/NoteSkins/dance/Dito");
+        let svg = folder.join("_down receptor.svg");
+        let bitmap = folder.join("unused.png");
+        std::fs::copy(root.join("dance/Test/Down Tap Note.png"), &bitmap).unwrap();
+        let mut h = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1400.0, 900.0))
+            .with_pixels_per_point(1.0)
+            .wgpu()
+            .build_eframe(|cc| {
+                PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
+                let mut app = SkinCraft::from_render_state(
+                    cc.wgpu_render_state.clone().unwrap(),
+                    root.join("profile"),
+                )
+                .unwrap();
+                app.panel.folder = folder.to_string_lossy().into_owned();
+                app.panel.load().unwrap();
+                app.panel.running = false;
+                app.panel.open_file(&mut app.photo, &svg).unwrap();
+                app
+            });
+        h.run_steps(6);
+        assert!(h.state().panel.vector_active());
+        let vector = h.render().unwrap();
+        {
+            let app = h.state_mut();
+            app.panel.open_file(&mut app.photo, &bitmap).unwrap();
+            assert!(!app.panel.vector_active());
+        }
+        h.run_steps(6);
+        let raster = h.render().unwrap();
+        let shots = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/scratch/theme");
+        std::fs::create_dir_all(&shots).unwrap();
+        vector.save(shots.join("vector.png")).unwrap();
+        raster.save(shots.join("raster.png")).unwrap();
+        // The top bar's left end (SkinCraft's own buttons) and the file browser's empty foot,
+        // and the preview panel's header: the same whichever editor draws in the middle.
+        for (x, y) in [(4, 4), (8, 880), (1395, 120), (120, 880)] {
+            assert_eq!(
+                vector.get_pixel(x, y),
+                raster.get_pixel(x, y),
+                "({x}, {y}) changed with the editor"
+            );
+        }
+        let palette = h.state().theme.palette();
+        let chrome = vector.get_pixel(4, 4);
+        assert_eq!(
+            [chrome[0], chrome[1], chrome[2]],
+            [palette.chrome.r(), palette.chrome.g(), palette.chrome.b()],
+            "the top bar is the theme's chrome"
+        );
+    }
 
     #[test]
     fn danoni_proof_draws_in_skincraft() {
