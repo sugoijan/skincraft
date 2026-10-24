@@ -291,3 +291,19 @@ system, keeps one egui style, and restores PhotoCraft's fonts (with its
 on-demand script fallbacks) when VectorCraft replaces the font table, adding
 the family names both draw in. `one_theme_whichever_editor_is_active`
 checks SkinCraft's chrome draws the same pixels with either editor active.
+
+## Source editor (2026-10-24)
+
+`src/text.rs` and `src/code.rs`. Lua, INI and SVG are highlighted by a
+lexer that follows Lua's long strings and `--[[ ]]` comments; the layout is
+kept while the text is unchanged. Line numbers mark the line the game
+reports: a Lua file is compiled exactly as a skin's is (`ddi_lua::Vm::load`:
+Lua 5.1 with StepMania's `cmd`, within the game's limits, nothing run), an
+SVG checked against the game's subset (`ddi_noteskin::svg::check_svg`).
+⌘F finds. A text over 128 KiB or with a line over 4096 characters (a
+generated atlas) is never laid out whole: it opens read-only in a view that
+lays out only the visible lines, an SVG's broken between its elements, each
+cut at 2000 characters (`large_single_line_svgs_open_safely_in_several_tabs`,
+SC-01). Ferrite (MIT) was considered; its editor is an application module
+on an older egui that still lays each line out whole, so its ideas, not its
+code, are used.

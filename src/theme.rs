@@ -306,6 +306,7 @@ impl Theme {
     }
 
     /// The palette last applied.
+    #[cfg(test)]
     pub fn palette(&self) -> Palette {
         self.palette.unwrap_or(Palette::DARK)
     }

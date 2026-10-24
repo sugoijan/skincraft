@@ -1,6 +1,7 @@
 //! SkinCraft's shared native editor host and optional PhotoCraft noteskin panel.
 #![forbid(unsafe_code)]
 
+mod code;
 mod files;
 mod panel;
 mod project;

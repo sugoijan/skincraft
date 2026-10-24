@@ -33,6 +33,7 @@ ddi-chart = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c
 ddi-engine = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f" }
 ddi-render = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f" }
 ddi-noteskin = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f" }
+ddi-lua = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f" }
 ddi-shell = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f" }
 ddi-ui = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f" }
 ddi-desktop = { git = "https://github.com/sugoijan/ditoditoinfinito.git", rev = "c41c68c8f23070c17406d5dc7158d1d3fe2e808f", default-features = false }
