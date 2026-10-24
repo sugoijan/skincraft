@@ -366,6 +366,8 @@ impl App for SkinCraft {
         } else {
             ui.push_id("skincraft-raster-editor", |ui| {
                 if self.photo.session.active().is_some() {
+                    // Panel/MCP opens can add documents after native logic ran.
+                    self.photo.sync_views();
                     self.photo.ui(ui, frame);
                 } else {
                     egui::CentralPanel::default().show(ui, |ui| {
@@ -582,7 +584,8 @@ mod tests {
             app.panel.save_project(&app.photo).unwrap();
         }
         h.run_steps(4);
-        // Unsupported effects keep their native source but never replace the last valid game art.
+        // A live blur is game art too: both of DDI's shells draw SVG filters with one rasterizer.
+        let unblurred = super::super::tests::field_pixels(&h.state().panel);
         h.state_mut()
             .panel
             .vector
@@ -595,9 +598,13 @@ mod tests {
                 &serde_json::json!({"effect":"blur.gaussian","params":{"radius":4},"ids":[id]}),
             )
             .unwrap();
-        h.run_steps(2);
-        assert!(h.state().panel.has_pending_sources());
-        assert_eq!(h.state().panel.editor.edits[&source], accepted);
+        h.run_steps(3);
+        assert!(!h.state().panel.has_pending_sources());
+        assert!(h.state().panel.editor.edits[&source].contains("feGaussianBlur"));
+        assert_ne!(
+            super::super::tests::field_pixels(&h.state().panel),
+            unblurred
+        );
         h.state_mut()
             .panel
             .vector
@@ -609,6 +616,7 @@ mod tests {
             .unwrap();
         h.run_steps(2);
         assert!(!h.state().panel.has_pending_sources());
+        assert_eq!(h.state().panel.editor.edits[&source], accepted);
         {
             let app = h.state_mut();
             app.panel
@@ -1176,6 +1184,11 @@ mod integration_tests {
         );
         let rs = h.state().panel.rs.clone();
         let restored = SkinCraft::from_render_state(rs, home.clone()).unwrap();
+        assert_eq!(
+            restored.photo.ui.views.len(),
+            restored.photo.session.documents().len(),
+            "restored raster tabs must have views before the status bar paints"
+        );
         assert!(
             restored
                 .photo

@@ -60,7 +60,7 @@ fn picks(dialog: rfd::AsyncFileDialog, request: PickRequest) -> PathsFuture {
             }
         }
         for (name, exts) in p.filters {
-            d = d.add_filter(name, exts);
+            d = d.add_filter(name, &exts);
         }
         d
     };
@@ -154,7 +154,10 @@ impl Runtime {
                     if let Some(parent) = &parent {
                         dialog = dialog.set_parent(parent.as_ref());
                     }
-                    let route = matches!(&request, PickRequest::Open(p) if p.filters == vectorcraft_engine::cmd::fileio::open_filters().collect::<Vec<_>>());
+                    // VectorCraft's own Open (its labels are translated:
+                    // compared by extensions).
+                    let route = matches!(&request, PickRequest::Open(p) if p.filters.len() == vectorcraft_engine::cmd::fileio::open_filters().count()
+                        && p.filters.iter().zip(vectorcraft_engine::cmd::fileio::open_filters()).all(|((_, a), (_, b))| a.iter().map(String::as_str).eq(b.iter().copied())));
                     let future = picks(dialog, request);
                     let routes = routes.clone();
                     let (tx, rx) = mpsc::channel();
@@ -186,8 +189,8 @@ impl Runtime {
         let guard = protected.clone();
         let routes = tx.clone();
         let mut services = photocraft_ui_egui::Services {
-            import: Some(Box::new(|name, bytes, depth| {
-                photocraft_io::import_with_svg_group_depth(name, bytes, depth)
+            import: Some(Box::new(|name, bytes, options| {
+                photocraft_io::import_with_options(name, bytes, options)
                     .map(|r| (r.document, r.warnings))
                     .map_err(|e| e.to_string())
             })),

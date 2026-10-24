@@ -177,7 +177,7 @@ impl host::SkinCraft {
             .map(PathBuf::from)
             .or_else(|| self.panel.home.clone())
             .ok_or("No project home")?;
-        vectorcraft_engine::file_access::AutomationRoots::new(Some(&read), Some(&write))
+        vectorcraft_engine::file_access::AutomationRoots::new(&[&read], &[&write])
     }
 
     pub(super) fn control_tick(&mut self, ctx: &egui::Context) {

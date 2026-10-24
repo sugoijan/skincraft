@@ -268,3 +268,12 @@ source drafts; exported metrics retain their authored defaults. Parameter
 reloads keep the demo time, and failed load/update paths retain or restore
 the previous preview. Dito's host-owned Lighter/color behavior goes through
 `ddi-ui` and `ddi-shell`, while other skins receive their values in Lua.
+
+## Restored raster tab views (2026-10-22)
+
+Reference restore adds PhotoCraft session documents outside native File Open.
+Synchronize native views after restore and again immediately before the raster
+UI: the noteskin panel and MCP can open a tab after native logic ran. The status
+bar indexes the active document’s view, so stale view counts otherwise panic
+on reopening a reference-heavy project. The native save/restore integration
+test asserts one view per restored document before its first paint.

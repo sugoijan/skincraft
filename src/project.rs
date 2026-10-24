@@ -144,10 +144,7 @@ impl Project {
         let folders: Vec<_> = self.skins.iter().map(skins::folder).collect();
         if let Some(chosen) = self.skins.first() {
             let head = params::head(&folders, &chosen.game, &chosen.name, &self.values);
-            if let (Ok(skin), Some(layout)) = (
-                Skin::load(&folders, &chosen.game, &head),
-                Layout::builtin(&self.layout),
-            ) {
+            if let (Ok(skin), Some(layout)) = (head, Layout::builtin(&self.layout)) {
                 self.coverage = layout
                     .lanes
                     .iter()
@@ -616,7 +613,9 @@ fn parameter_chain(
                     }
                     let values =
                         Values::from([(parameter.name.clone(), params::Value::Text(choice.id))]);
-                    let head = params::head(folders, game, &name, &values);
+                    let head = params::head(folders, game, &name, &values)
+                        .map_err(|e| e.to_string())?
+                        .name;
                     if !names.iter().any(|n| n.eq_ignore_ascii_case(&head)) {
                         names.push(head);
                     }

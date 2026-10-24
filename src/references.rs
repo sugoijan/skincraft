@@ -161,6 +161,8 @@ pub(super) fn restore(app: &mut host::SkinCraft) -> Result<(), String> {
             app.photo.session.add_document(doc, record.path);
         }
     }
+    // Session restore adds documents without the native File Open UI path.
+    app.photo.sync_views();
     if let Some(v) = &mut app.panel.vector {
         v.active = state.vector_active;
     }
