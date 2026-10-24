@@ -48,6 +48,14 @@ impl Panel {
         Ok(())
     }
 
+    /// Each declared parameter's resolved value, by id (the compact form of [`Self::parameter_info`]).
+    pub(super) fn parameter_values(&self) -> serde_json::Value {
+        let Some(project) = &self.project else {
+            return json!({});
+        };
+        json!(project.parameters.resolve(&self.preview_parameters))
+    }
+
     pub(super) fn parameter_info(&self) -> serde_json::Value {
         let Some(project) = &self.project else {
             return json!([]);

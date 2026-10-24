@@ -22,6 +22,10 @@ pub struct State {
     pub vectors: Vec<VectorSource>,
     #[serde(default)]
     pub preview_parameters: ddi_noteskin::params::Values,
+    /// The project's own files: their paths in the skin's folder, and an imported file's copy
+    /// in this checkpoint's `added/` (a text's is in `texts`).
+    #[serde(default)]
+    pub added: Vec<(PathBuf, Option<String>)>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -114,6 +118,17 @@ pub fn save_full(
     for (_, name) in previous.drawings {
         if !state.drawings.iter().any(|(_, keep)| keep == &name) {
             let _ = std::fs::remove_file(dir.join(name));
+        }
+    }
+    for (_, stored) in previous.added {
+        if let Some(name) = stored
+            && !state
+                .added
+                .iter()
+                .any(|(_, keep)| keep.as_ref() == Some(&name))
+            && !name.contains(['/', '\\'])
+        {
+            let _ = std::fs::remove_file(dir.join("added").join(name));
         }
     }
     for record in previous.vectors {

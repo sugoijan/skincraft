@@ -193,6 +193,20 @@ impl host::SkinCraft {
             if expires <= Instant::now() || !request.claim() {
                 continue;
             }
+            // A request sent again with the same id (after a timeout or a reconnect) gets the
+            // first one's reply; it does not run twice.
+            let id = request.params["requestId"]
+                .as_str()
+                .filter(|id| !id.is_empty() && id.len() <= 128)
+                .map(str::to_owned);
+            if let Some(id) = &id
+                && let Some((_, reply)) = self.replies.iter().find(|(seen, _)| seen == id)
+            {
+                let mut reply = reply.clone();
+                reply["replayed"] = json!(true);
+                let _ = request.reply.send(reply);
+                continue;
+            }
             let result = self.request(&request.method, request.params.clone(), ctx);
             match result {
                 Ok(result) if request.method == "screenshot" && result["pending"] == true => {
@@ -209,10 +223,17 @@ impl host::SkinCraft {
                     )));
                 }
                 result => {
-                    let _ = request.reply.send(match result {
+                    let reply = match result {
                         Ok(v) => json!({"ok":true,"result":v}),
                         Err(e) => json!({"ok":false,"error":e}),
-                    });
+                    };
+                    if let Some(id) = id {
+                        if self.replies.len() >= 64 {
+                            self.replies.pop_front();
+                        }
+                        self.replies.push_back((id, reply.clone()));
+                    }
+                    let _ = request.reply.send(reply);
                 }
             }
         }
@@ -232,31 +253,73 @@ impl host::SkinCraft {
                 .ok_or("Missing path".to_string())
         };
         match method {
-            "inspect" => Ok(json!({"workspace":self.inspect(), "editor":if self.panel.vector_active(){"vector"}else{"raster"}, "vector":self.panel.vector.as_ref().map(|v| vectorcraft_ui_egui::control::inspect(&v.app,ctx)), "raster":photocraft_ui_egui::control::inspect(&self.photo,ctx)})),
-            "list_files" => Ok(json!(self.panel.files.iter().map(|f| json!({"path":f.path,"name":f.name,"owner":f.owner,"inherited":f.inherited,"image":f.image,"text":f.text})).collect::<Vec<_>>())),
-            "open_file" => { let p=path()?; self.check_read(&p)?; self.open_any(&p)?; self.panel.vector_tick(); self.panel.update_artwork(&mut self.photo)?; Ok(self.inspect()) }
-            "load_skin" => { let p=path()?; self.check_read(&p)?; self.load_skin(&p)?; Ok(self.inspect()) }
-            "read_text" | "write_text" => {
-                let p=path()?.canonicalize().map_err(|e| e.to_string())?;
-                if !self.panel.files.iter().any(|f| f.path==p && f.text) { return Err("Text file is not in the current project".into()); }
-                if method=="write_text" {
-                    if self.panel.vector.as_ref().is_some_and(|v| v.retained.contains_key(&p)) { return Err("SVG is managed by the vector editor; use release_svg_source before editing its text".into()); }
-                    if self.panel.drawings.contains_key(&p) { return Err("SVG has a raster override; release it in the file browser first".into()); }
-                    let text=params["text"].as_str().ok_or("Missing text")?.to_string();
-                    self.panel.editor.open(&p)?; self.panel.editor.set(&p,text)?;
-                    self.panel.text_reload=Some(Instant::now()-Duration::from_secs(1)); self.panel.checkpoint_dirty=true;
-                    self.panel.workspace_tick(&mut self.photo,ctx);
+            "status" => Ok(self.status()),
+            "inspect" => self.inspect_scope(params["scope"].as_str().unwrap_or("summary"), ctx),
+            "list_files" => Ok(json!(self.panel.files.iter().map(|f| json!({"path":f.path,"name":f.name,"owner":f.owner,"inherited":f.inherited,"added":f.added,"image":f.image,"text":f.text,"draft":self.panel.editor.edits.contains_key(&f.path)})).collect::<Vec<_>>())),
+            "open_file" => { let p=path()?; self.check_read(&p)?; self.open_any(&p)?; self.panel.vector_tick(); self.panel.update_artwork(&mut self.photo)?; Ok(self.status()) }
+            "load_skin" => { let p=path()?; self.check_read(&p)?; self.load_skin(&p)?; Ok(self.status()) }
+            "read_text" => {
+                let p = self.panel.text_file(params["path"].as_str().ok_or("Missing path")?)?;
+                let text = match self.panel.editor.edits.get(&p) { Some(t) => t.clone(), None => files::read_text(&p)? };
+                let lines = text.split('\n').count();
+                let (from, to) = (params["start_line"].as_u64().map(|n| n.max(1) as usize), params["end_line"].as_u64().map(|n| n as usize));
+                let shown = if from.is_some() || to.is_some() {
+                    let (from, to) = (from.unwrap_or(1), to.unwrap_or(lines).min(lines));
+                    text.split('\n').skip(from - 1).take(to.saturating_sub(from - 1)).collect::<Vec<_>>().join("\n")
+                } else { text.clone() };
+                Ok(json!({"path":p,"hash":resources::content_hash(&text),"bytes":text.len(),"lines":lines,"draft":self.panel.editor.edits.contains_key(&p),"text":shown}))
+            }
+            "write_text" => {
+                let change = resources::Change::Write { path: params["path"].as_str().ok_or("Missing path")?.into(), text: params["text"].as_str().ok_or("Missing text")?.into(), expect_hash: params["expect_hash"].as_str().map(str::to_owned) };
+                self.panel.apply(&[change])?;
+                let p = self.panel.text_file(params["path"].as_str().unwrap_or_default())?;
+                let text = self.panel.editor.edits.get(&p).cloned().unwrap_or_default();
+                let mut reply = json!({"path":p,"hash":resources::content_hash(&text),"bytes":text.len(),"revision":self.panel.reloads,"preview":"applied"});
+                if params["echo"].as_bool() == Some(true) { reply["text"] = json!(text); }
+                Ok(reply)
+            }
+            "apply" => {
+                let changes: Vec<resources::Change> = serde_json::from_value(params["changes"].clone()).map_err(|e| format!("Invalid changes: {e}"))?;
+                for change in &changes {
+                    if let resources::Change::Import { source, .. } = change { self.check_read(Path::new(source))?; }
                 }
-                Ok(json!({"path":p,"text":self.panel.editor.edits.get(&p).cloned().map(Ok).unwrap_or_else(|| files::read_text(&p))?,"error":self.panel.failure}))
+                self.panel.apply(&changes)?;
+                Ok(json!({"applied":changes.len(),"revision":self.panel.reloads,"files":self.panel.files.len(),"images":self.panel.images.summary()}))
+            }
+            "create_file" | "import_file" | "remove_file" | "discard_draft" => {
+                let p = params["path"].as_str().ok_or("Missing path")?.to_string();
+                let change = match method {
+                    "create_file" => resources::Change::Create { path: p, text: params["text"].as_str().ok_or("Missing text")?.into() },
+                    "import_file" => { let source = params["source"].as_str().ok_or("Missing source")?; self.check_read(Path::new(source))?; resources::Change::Import { source: source.into(), path: p, replace: params["replace"].as_bool().unwrap_or(false) } }
+                    "remove_file" => resources::Change::Remove { path: p },
+                    _ => resources::Change::Discard { path: p },
+                };
+                self.panel.apply(&[change])?;
+                Ok(json!({"revision":self.panel.reloads,"files":self.panel.files.len(),"images":self.panel.images.summary()}))
             }
             "release_svg_source" => {
                 let p=path()?.canonicalize().map_err(|e| e.to_string())?;
                 if !self.panel.files.iter().any(|f| f.path==p && host::is_svg(&p)) { return Err("SVG is not in this project".into()); }
                 if let Some(v)=&mut self.panel.vector {v.release(&p);}
-                self.panel.editor.open(&p)?; self.panel.checkpoint_dirty=true; Ok(self.inspect())
+                self.panel.editor.open(&p)?; self.panel.checkpoint_dirty=true; Ok(self.status())
             }
-            "save_project" => { self.panel.update_artwork(&mut self.photo)?; self.panel.save_project(&self.photo)?; Ok(self.inspect()) }
-            "export_skin" => { let p=path()?; self.check_write(&p)?; self.export_skin(&p)?; Ok(json!({"path":p})) }
+            "save_project" => { self.panel.update_artwork(&mut self.photo)?; self.panel.save_project(&self.photo)?; Ok(self.status()) }
+            "export_skin" => {
+                let p=path()?; self.check_write(&p)?;
+                // A reload still waiting for the typing pause runs now, not later.
+                if self.panel.text_reload.is_some() { self.panel.text_reload = Some(Instant::now() - Duration::from_secs(1)); self.panel.workspace_tick(&mut self.photo, ctx); }
+                let blockers = self.panel.export_blockers();
+                if !blockers.is_empty() { return Err(json!({"message":"Export needs every source loaded first","blockers":blockers}).to_string()); }
+                self.export_skin(&p)?; Ok(json!({"path":p,"revision":self.panel.reloads}))
+            }
+            "capture_preview" => {
+                let time = params["time"].as_f64().unwrap_or(self.panel.time);
+                let size = [params["width"].as_u64().unwrap_or(480) as u32, params["height"].as_u64().unwrap_or(640) as u32];
+                let (png, w, h) = self.panel.capture_preview(time, size)?;
+                if params["path"].is_string() { let out = path()?; self.check_write(&out)?; workspace::atomic(&out, &png)?; }
+                use base64::Engine;
+                Ok(json!({"width":w,"height":h,"time":time,"revision":self.panel.reloads,"images":self.panel.images.hash(),"pngBase64":base64::engine::general_purpose::STANDARD.encode(&png)}))
+            }
             "save_file" => { let p=path()?; self.check_write(&p)?; self.save_copy(&p)?; Ok(json!({"path":p})) }
             "preview" => {
                 let rules = params["ruleset"].as_str().map(|id| super::preview_rules(id).ok_or("Unknown preview ruleset")).transpose()?;
@@ -266,10 +329,25 @@ impl host::SkinCraft {
                     self.panel.set_parameters(serde_json::from_value(values.clone()).map_err(|e| format!("Invalid parameter patch: {e}"))?)?;
                 }
                 if let Some(rules)=rules {self.panel.options.rules=rules;}
+                let mut reload = false;
+                if let Some(layout)=params["layout"].as_str() {
+                    if Layout::builtin(layout).is_none() { return Err(format!("Unknown layout {layout}")); }
+                    if self.panel.layout != layout { self.panel.layout = layout.to_string(); reload = true; }
+                }
+                if let Some(reverse)=params["reverse"].as_bool() && reverse != self.panel.options.play.scroll.reverse { self.panel.options.play.scroll.reverse = reverse; reload = true; }
+                if let Some(speed)=params["scroll_speed"].as_f64() {
+                    if !(0.5..=4.0).contains(&speed) { return Err("scroll_speed is from 0.5 to 4".into()); }
+                    self.panel.options.play.scroll.speed = ddi_engine::scroll::SpeedMod::XMod(speed);
+                }
+                if let Some(backdrop)=params["backdrop"].as_f64() {
+                    if !(0.0..=1.0).contains(&backdrop) { return Err("backdrop is from 0 to 1".into()); }
+                    self.panel.options.background = backdrop as f32;
+                }
+                if reload { self.panel.checkpoint_dirty = true; self.panel.load()?; }
                 if let Some(auto)=params["autoplay_flashes"].as_bool(){self.panel.options.autoplay_flashes=auto;}
                 if let Some(run)=params["running"].as_bool(){self.panel.running=run;}
                 if let Some(time)=time {self.panel.time=time.min(self.panel.duration);}
-                Ok(self.inspect())
+                self.inspect_scope("preview", ctx)
             }
             "screenshot" => {
                 if self.captures.len()>=4 {return Err("Too many pending screenshots".into());}
@@ -279,6 +357,51 @@ impl host::SkinCraft {
             "editor_request" => self.editor_request(&params,ctx),
             _ => Err(format!("Unknown SkinCraft method: {method}")),
         }
+    }
+
+    /// A compact health answer: which app, project and revisions this is, and whether anything
+    /// is pending; what an agent checks before and after an edit.
+    pub(super) fn status(&self) -> Value {
+        let project = self
+            .panel
+            .project
+            .as_ref()
+            .and_then(|p| p.skins.first())
+            .map(|s| json!({"dir":s.dir,"game":s.game,"name":s.name}));
+        json!({
+            "app": "SkinCraft", "version": env!("CARGO_PKG_VERSION"), "pid": std::process::id(),
+            "home": self.panel.home, "project": project, "layout": self.panel.layout,
+            "editor": if self.panel.vector_active() {"vector"} else {"raster"},
+            "revision": self.panel.reloads,
+            "drafts": {"texts": self.panel.editor.edits.len(), "added": self.panel.added.len(), "drawings": self.panel.drawings.len(), "vectors": self.panel.vector_count()},
+            "pending": self.panel.has_pending_sources(), "checkpointPending": self.panel.checkpoint_dirty,
+            "failure": self.panel.failure,
+            "images": self.panel.images.summary(),
+            "preview": {"time": self.panel.time, "running": self.panel.running, "ruleset": self.panel.options.rules.id},
+        })
+    }
+
+    /// One part of the workspace's state: `summary` (the default), `files`, `parameters`,
+    /// `preview`, `images` (what each of the skin's images costs), `editors` (both native editors'
+    /// state, large) or `all` (everything, as before).
+    fn inspect_scope(&self, scope: &str, ctx: &egui::Context) -> Result<Value, String> {
+        let p = &self.panel;
+        Ok(match scope {
+            "summary" => {
+                let mut s = self.status();
+                s["parameters"] = json!(p.parameter_values());
+                s["coverage"] = json!(p.project.as_ref().map(|p| &p.coverage));
+                s["files"] = json!(p.files.len());
+                s
+            }
+            "files" => json!(p.files.iter().map(|f| json!({"path":f.path,"owner":f.owner,"inherited":f.inherited,"added":f.added,"image":f.image,"text":f.text,"draft":p.editor.edits.contains_key(&f.path)})).collect::<Vec<_>>()),
+            "parameters" => p.parameter_info(),
+            "preview" => json!({"layout":p.layout,"reverse":p.options.play.scroll.reverse,"scrollSpeed":match p.options.play.scroll.speed { ddi_engine::scroll::SpeedMod::XMod(v) => v, _ => 1.0 },"backdrop":p.options.background,"ruleset":p.options.rules.id,"autoplayFlashes":p.options.autoplay_flashes,"time":p.time,"duration":p.duration,"running":p.running,"frames":p.preview.frames(),"updateMs":p.update_ms,"resolvedSkin":p.preview.noteskin().map(|s| &s.name),"previewParameters":p.preview_parameters,"parameters":p.parameter_info(),"revision":p.reloads}),
+            "images" => json!({"summary":p.images.summary(),"hash":p.images.hash(),"pixels":p.images.pixels(),"budget":p.images.budget(),"images":p.images.images}),
+            "editors" => json!({"editor":if p.vector_active(){"vector"}else{"raster"}, "vector":p.vector.as_ref().map(|v| vectorcraft_ui_egui::control::inspect(&v.app,ctx)), "raster":photocraft_ui_egui::control::inspect(&self.photo,ctx)}),
+            "all" => json!({"workspace":self.inspect(), "editor":if p.vector_active(){"vector"}else{"raster"}, "vector":p.vector.as_ref().map(|v| vectorcraft_ui_egui::control::inspect(&v.app,ctx)), "raster":photocraft_ui_egui::control::inspect(&self.photo,ctx)}),
+            _ => return Err("scope is summary, files, parameters, preview, images, editors or all".into()),
+        })
     }
 
     fn check_read(&self, path: &Path) -> Result<(), String> {

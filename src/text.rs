@@ -36,7 +36,12 @@ impl Editor {
 
     pub fn open(&mut self, path: &Path) -> Result<(), String> {
         if !self.buffers.contains_key(path) {
-            let original = crate::files::read_text(path)?;
+            // A file the project added has no original: its draft is all of it.
+            let original = if !path.exists() && self.edits.contains_key(path) {
+                String::new()
+            } else {
+                crate::files::read_text(path)?
+            };
             let text = self.edits.get(path).unwrap_or(&original).clone();
             self.buffers.insert(path.to_path_buf(), text);
             self.originals.insert(path.to_path_buf(), original);
@@ -49,11 +54,36 @@ impl Editor {
         Ok(())
     }
 
+    /// A new file of the project's, `text` its draft.
+    pub fn create(&mut self, path: &Path, text: String) -> Result<(), String> {
+        if text.len() > 1 << 20 {
+            return Err("Text exceeds 1 MiB".into());
+        }
+        self.originals.insert(path.to_path_buf(), String::new());
+        self.edits.insert(path.to_path_buf(), text.clone());
+        self.buffers.insert(path.to_path_buf(), text);
+        self.changed = Some(Instant::now());
+        Ok(())
+    }
+
+    /// Forgets `path`'s draft and its tab: back to its file (or gone, for an added file).
+    pub fn discard(&mut self, path: &Path) {
+        self.edits.remove(path);
+        self.buffers.remove(path);
+        self.originals.remove(path);
+        self.tabs.retain(|p| p != path);
+        if self.active.as_deref() == Some(path) {
+            self.active = self.tabs.last().cloned();
+        }
+        self.changed = Some(Instant::now());
+    }
+
     pub fn set(&mut self, path: &Path, text: String) -> Result<(), String> {
         if text.len() > 1 << 20 {
             return Err("Text exceeds 1 MiB".into());
         }
-        if self.originals.get(path) == Some(&text) {
+        // An added file's draft stays, even empty: it is the file.
+        if self.originals.get(path) == Some(&text) && path.exists() {
             self.edits.remove(path);
         } else {
             self.edits.insert(path.to_path_buf(), text.clone());

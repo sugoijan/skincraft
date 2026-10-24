@@ -198,10 +198,12 @@ impl Workspace {
         changes
     }
 
+    /// `copies`: imported files' copies, read in their place.
     pub fn stage_checkpoint(
         &self,
         dir: &Path,
         drafts: &HashMap<PathBuf, String>,
+        copies: &HashMap<PathBuf, PathBuf>,
     ) -> Result<Vec<workspace::VectorSource>, String> {
         let generation = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -222,7 +224,7 @@ impl Workspace {
                 file,
                 svg: match drafts.get(source) {
                     Some(svg) => svg.clone(),
-                    None => files::read_text(source)?,
+                    None => files::read_text(copies.get(source).unwrap_or(source))?,
                 },
                 open: open.contains(source),
             });

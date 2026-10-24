@@ -19,6 +19,19 @@ pub struct Project {
     layout: String,
 }
 
+/// A file the project adds to its own skin folder. The source folder is never written: an added
+/// text is a draft in the editor (`Text`), an imported file's bytes are kept with the project's
+/// checkpoint (`File`, that copy's path). Both are written into the candidate tree the preview
+/// loads and into exports, as if they were in the folder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Added {
+    Text,
+    File(PathBuf),
+}
+
+/// The files a project adds, by the path each would have in its skin's folder.
+pub type AddedFiles = std::collections::BTreeMap<PathBuf, Added>;
+
 pub struct Asset {
     pub source: PathBuf,
     pub label: String,
@@ -226,7 +239,7 @@ impl Project {
         let stage = parent.join(format!(".ddi-onigiri-{}", std::process::id()));
         std::fs::create_dir(&stage).map_err(|e| e.to_string())?;
         let result = (|| {
-            plan.write_tree_with(&stage, edits, texts)?;
+            plan.write_tree_with(&stage, edits, texts, &AddedFiles::new())?;
             let name = format!("{} Studio", base.name);
             let rel = Path::new("NoteSkins").join(&base.game).join(&name);
             let target = stage.join(&rel);
@@ -278,7 +291,7 @@ impl Project {
     }
 
     fn write_tree(&self, out: &Path, edits: &HashMap<PathBuf, Rgba>) -> Result<(), String> {
-        self.write_tree_with(out, edits, &HashMap::new())
+        self.write_tree_with(out, edits, &HashMap::new(), &AddedFiles::new())
     }
 
     fn write_tree_with(
@@ -286,6 +299,7 @@ impl Project {
         out: &Path,
         edits: &HashMap<PathBuf, Rgba>,
         text_edits: &HashMap<PathBuf, String>,
+        added: &AddedFiles,
     ) -> Result<(), String> {
         let mut bytes = 0u64;
         let mut replacements = Vec::<(String, String)>::new();
@@ -356,6 +370,47 @@ impl Project {
                     }
                 }
                 if ddi_noteskin::import::kept_text(f.path.as_str()) {
+                    texts.push(to);
+                }
+            }
+        }
+        // The project's own files, in its skin's folder.
+        if !added.is_empty() {
+            let base = self.skins.first().ok_or("No skin selected")?;
+            let target = out.join("NoteSkins").join(&base.game).join(&base.name);
+            for (path, file) in added {
+                let rel = path
+                    .strip_prefix(&base.dir)
+                    .map_err(|_| format!("{} is not in the skin's folder", path.display()))?;
+                let to = target.join(rel);
+                if !destinations.insert(to.to_string_lossy().to_lowercase()) {
+                    return Err(format!(
+                        "{} would replace a file of the skin",
+                        rel.display()
+                    ));
+                }
+                if let Some(p) = to.parent() {
+                    std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+                }
+                match file {
+                    Added::Text => {
+                        let text = text_edits
+                            .get(path)
+                            .ok_or_else(|| format!("{} has no text", rel.display()))?;
+                        std::fs::write(&to, text).map_err(|e| e.to_string())?;
+                        applied_texts.insert(path.clone());
+                    }
+                    // An imported file's draft (an SVG edited in the vector editor) wins.
+                    Added::File(_) if text_edits.contains_key(path) => {
+                        std::fs::write(&to, &text_edits[path]).map_err(|e| e.to_string())?;
+                        applied_texts.insert(path.clone());
+                    }
+                    Added::File(stored) => {
+                        std::fs::copy(stored, &to)
+                            .map_err(|e| format!("{}: {e}", rel.display()))?;
+                    }
+                }
+                if ddi_noteskin::import::kept_text(&rel.to_string_lossy()) {
                     texts.push(to);
                 }
             }
@@ -437,6 +492,7 @@ impl Project {
 
     /// Build through the ordinary game loader in a private candidate tree. No source is written.
     /// Returned folder identities are remapped to the original files, so live image bindings survive.
+    #[cfg(test)]
     pub fn prepare_texts(
         &self,
         layout: &Layout,
@@ -444,7 +500,19 @@ impl Project {
         texts: &HashMap<PathBuf, String>,
         stage: &Path,
     ) -> Result<(Self, skins::Prepared), String> {
-        if texts.is_empty() {
+        self.prepare_added(layout, reverse, texts, &AddedFiles::new(), stage)
+    }
+
+    /// [`Project::prepare_texts`] with the project's own files.
+    pub fn prepare_added(
+        &self,
+        layout: &Layout,
+        reverse: bool,
+        texts: &HashMap<PathBuf, String>,
+        added: &AddedFiles,
+        stage: &Path,
+    ) -> Result<(Self, skins::Prepared), String> {
+        if texts.is_empty() && added.is_empty() {
             return Ok((self.clone(), self.prepare(layout, reverse)?));
         }
         let plan = self.text_chain(texts)?;
@@ -454,7 +522,7 @@ impl Project {
         }
         std::fs::create_dir(stage).map_err(|e| e.to_string())?;
         let result = (|| {
-            plan.write_tree_with(stage, &HashMap::new(), texts)?;
+            plan.write_tree_with(stage, &HashMap::new(), texts, added)?;
             let selected = self.skins.first().ok_or("Missing skin")?;
             let mut project = Self::open(
                 &stage
@@ -500,22 +568,35 @@ impl Project {
         result
     }
 
+    #[cfg(test)]
     pub fn export_texts(
         &self,
         out: &Path,
         edits: &HashMap<PathBuf, Rgba>,
         texts: &HashMap<PathBuf, String>,
     ) -> Result<(), String> {
-        if texts.is_empty() {
+        self.export_added(out, edits, texts, &AddedFiles::new())
+    }
+
+    /// [`Project::export_texts`] with the project's own files.
+    pub fn export_added(
+        &self,
+        out: &Path,
+        edits: &HashMap<PathBuf, Rgba>,
+        texts: &HashMap<PathBuf, String>,
+        added: &AddedFiles,
+    ) -> Result<(), String> {
+        if texts.is_empty() && added.is_empty() {
             return self.export(out, edits);
         }
         if out.exists() {
             return Err("Export needs a new destination folder".into());
         }
-        let (_, before) = self.prepare_texts(
+        let (_, before) = self.prepare_added(
             &Layout::builtin(&self.layout).ok_or("Unknown layout")?,
             false,
             texts,
+            added,
             &out.with_extension("validate-text"),
         )?;
         let parent = out.parent().ok_or("Export needs a parent folder")?;
@@ -524,7 +605,7 @@ impl Project {
         std::fs::create_dir(&stage).map_err(|e| e.to_string())?;
         let result = (|| {
             self.text_chain(texts)?
-                .write_tree_with(&stage, edits, texts)?;
+                .write_tree_with(&stage, edits, texts, added)?;
             let selected = self.skins.first().ok_or("Missing skin")?;
             let p = Self::open(
                 &stage

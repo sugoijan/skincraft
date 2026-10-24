@@ -307,3 +307,18 @@ cut at 2000 characters (`large_single_line_svgs_open_safely_in_several_tabs`,
 SC-01). Ferrite (MIT) was considered; its editor is an application module
 on an older egui that still lays each line out whole, so its ideas, not its
 code, are used.
+
+## Agent tools and the project's own files (2026-10-24)
+
+`src/resources.rs`: files created or imported through MCP are the project's
+(`project::Added`): an added text is a draft, an imported file a copy in the
+checkpoint's `added/`. `Project::prepare_added`/`export_added` write them
+into the candidate tree and exports; `files::with_added` lists them;
+`workspace::State::added` keeps them; `Panel::readable` points readers at a
+copy. `Panel::apply` applies several changes (write with an expected hash,
+create, import, remove, discard) and reloads once; a failure undoes them.
+`control.rs` answers `status`, scoped `inspect`, compact `write_text`,
+`apply`, `capture_preview` (the preview drawn offscreen and read back),
+`export_skin` blockers, and replays the reply to a repeated `requestId`.
+The preview panel lists what each of the skin's images costs
+(`ddi_noteskin::report`).

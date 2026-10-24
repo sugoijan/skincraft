@@ -22,6 +22,17 @@ impl Panel {
         let Some(state) = workspace::load(&dir)? else {
             return Ok(());
         };
+        // The project's own files first: drafts and tabs may be theirs.
+        if !state.added.is_empty() {
+            for (path, stored) in &state.added {
+                let file = match stored {
+                    Some(name) => project::Added::File(dir.join("added").join(name)),
+                    None => project::Added::Text,
+                };
+                self.added.insert(path.clone(), file);
+            }
+            self.files = files::with_added(std::mem::take(&mut self.files), project, &self.added);
+        }
         let mut total = 0u64;
         for (source, name) in state.drawings {
             if !self.files.iter().any(|f| f.path == source && f.image) {
@@ -74,6 +85,7 @@ impl Panel {
         self.editor.visible = !self.editor.tabs.is_empty();
         self.pending_open = state.open;
         if !self.editor.edits.is_empty()
+            || !self.added.is_empty()
             || self
                 .project
                 .as_ref()
@@ -118,7 +130,7 @@ impl Panel {
         open.sort();
         #[cfg(feature = "skincraft")]
         let vectors = match &self.vector {
-            Some(v) => v.stage_checkpoint(&dir, &self.editor.edits)?,
+            Some(v) => v.stage_checkpoint(&dir, &self.editor.edits, &self.copies())?,
             None => workspace::load(&dir)?
                 .map(|s| s.vectors)
                 .unwrap_or_default(),
@@ -137,6 +149,19 @@ impl Panel {
                 active_text: self.editor.active.clone(),
                 vectors,
                 preview_parameters: self.preview_parameters.clone(),
+                added: self
+                    .added
+                    .iter()
+                    .map(|(path, file)| {
+                        let stored = match file {
+                            project::Added::Text => None,
+                            project::Added::File(copy) => {
+                                copy.file_name().map(|n| n.to_string_lossy().into_owned())
+                            }
+                        };
+                        (path.clone(), stored)
+                    })
+                    .collect(),
                 ..Default::default()
             },
         )?;
@@ -176,7 +201,12 @@ impl Panel {
             if !self.files.iter().any(|f| f.path == source && f.image) {
                 return Err("Image does not belong to the current noteskin".into());
             }
-            vector.open(source, self.editor.edits.get(source))?;
+            // An imported SVG opens from its copy.
+            let copy = match (self.editor.edits.get(source), self.added.get(source)) {
+                (None, Some(project::Added::File(copy))) => Some(files::read_text(copy)?),
+                _ => None,
+            };
+            vector.open(source, self.editor.edits.get(source).or(copy.as_ref()))?;
             self.selected_file = Some(source.to_path_buf());
             if let Some(index) = self.assets.iter().position(|a| a.source == source) {
                 self.selected = index;
@@ -220,7 +250,12 @@ impl Panel {
         let state = if let Some(state) = self.drawings.get(source) {
             state.clone()
         } else {
-            if std::fs::metadata(source).map_err(|e| e.to_string())?.len() > 32 << 20 {
+            let readable = self.readable(source);
+            if std::fs::metadata(&readable)
+                .map_err(|e| e.to_string())?
+                .len()
+                > 32 << 20
+            {
                 return Err("Image exceeds 32 MiB".into());
             }
             let image = if let Some(image) = self.edits.get(source) {
@@ -228,7 +263,7 @@ impl Panel {
             } else if let Some(asset) = self.assets.iter().find(|a| a.source == source) {
                 asset.image.clone()
             } else {
-                ddi_desktop::play::skins::decode_image(source)?.0
+                ddi_desktop::play::skins::decode_image(&readable)?.0
             };
             let pixels = u64::from(image.size[0]) * u64::from(image.size[1]);
             if pixels > 4 << 20 {
@@ -364,10 +399,11 @@ impl Panel {
         } else if let Some(asset) = self.assets.iter().find(|a| a.source == path) {
             asset.image.clone()
         } else {
-            if std::fs::metadata(path).ok()?.len() > 32 << 20 {
+            let readable = self.readable(path);
+            if std::fs::metadata(&readable).ok()?.len() > 32 << 20 {
                 return None;
             }
-            ddi_desktop::play::skins::decode_image(path).ok()?.0
+            ddi_desktop::play::skins::decode_image(&readable).ok()?.0
         };
         let source = image::RgbaImage::from_raw(image.size[0], image.size[1], image.data)?;
         let thumb = image::imageops::thumbnail(&source, 48, 48);

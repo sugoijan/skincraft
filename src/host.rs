@@ -12,6 +12,8 @@ pub struct SkinCraft {
     pub(super) control: Option<control::Server>,
     pub(super) captures: Vec<control::Capture>,
     pub(super) capture_id: u64,
+    /// Replies to requests that carried an id, the latest 64 (`control.rs`).
+    pub(super) replies: std::collections::VecDeque<(String, serde_json::Value)>,
     references_at: Instant,
 }
 
@@ -84,6 +86,7 @@ impl SkinCraft {
             control: None,
             captures: Vec::new(),
             capture_id: 0,
+            replies: Default::default(),
             references_at: Instant::now(),
         };
         references::restore(&mut app)?;
@@ -809,7 +812,9 @@ impl SkinCraft {
                                     .get(source)
                                     .cloned()
                                     .map(Ok)
-                                    .unwrap_or_else(|| files::read_text(source))?;
+                                    .unwrap_or_else(|| {
+                                        files::read_text(&self.panel.readable(source))
+                                    })?;
                                 native::write(path, text.as_bytes(), &native.protected)?;
                             }
                         }
@@ -932,7 +937,12 @@ impl SkinCraft {
             .project
             .as_ref()
             .ok_or("No noteskin")?
-            .export_texts(path, &self.panel.edits, &self.panel.editor.edits)?;
+            .export_added(
+                path,
+                &self.panel.edits,
+                &self.panel.editor.edits,
+                &self.panel.added,
+            )?;
         self.panel.message = format!("Exported skin to {}", path.display());
         Ok(())
     }
@@ -1015,6 +1025,74 @@ mod integration_tests {
                 app.panel.running = false;
                 app
             })
+    }
+
+    /// Files the project added survive a save and a new session, reach the preview without the
+    /// source folder ever holding them, and are written by an export.
+    #[test]
+    fn added_files_survive_a_restart_and_never_touch_the_source() {
+        let root = crate::project::tests::parameter_fixture("added-files");
+        let home = root.join("profile");
+        let source = root.join("dance/Test");
+        let sheet = home.join("sheet.svg");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(&sheet, r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="20" fill="#fff"/></svg>"##).unwrap();
+        {
+            let mut h = harness(&home);
+            h.run_steps(3);
+            h.state_mut().load_skin(&source).unwrap();
+            h.run_steps(3);
+            let ctx = h.ctx.clone();
+            let result = h.state_mut().request(
+                "apply",
+                json!({"changes":[
+                    {"op":"create","path":"Extra/Module.lua","text":"return 7\n"},
+                    {"op":"import","source":sheet,"path":"_extra sheet.svg"}
+                ]}),
+                &ctx,
+            );
+            assert!(result.is_ok(), "{result:?}");
+            assert!(
+                h.state()
+                    .panel
+                    .files
+                    .iter()
+                    .any(|f| f.added && f.name == "Extra/Module.lua")
+            );
+            h.state_mut().save_workspace().unwrap();
+        }
+        assert!(!source.join("Extra").exists() && !source.join("_extra sheet.svg").exists());
+        let mut h = harness(&home);
+        h.run_steps(8);
+        let panel = &h.state().panel;
+        assert!(panel.failure.is_none(), "{:?}", panel.failure);
+        assert!(
+            panel
+                .files
+                .iter()
+                .any(|f| f.added && f.name == "_extra sheet.svg")
+        );
+        let module = panel
+            .files
+            .iter()
+            .find(|f| f.name == "Extra/Module.lua")
+            .unwrap()
+            .path
+            .clone();
+        assert_eq!(
+            panel.editor.edits.get(&module).map(String::as_str),
+            Some("return 7\n")
+        );
+        let out = root.join("export");
+        h.state_mut().export_skin(&out).unwrap();
+        let exported = out.join("NoteSkins/dance/Test");
+        assert_eq!(
+            std::fs::read_to_string(exported.join("Extra/Module.lua")).unwrap(),
+            "return 7\n"
+        );
+        assert!(exported.join("_extra sheet.svg").is_file());
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1318,11 +1396,16 @@ mod integration_tests {
             assert_eq!(initialized["result"]["serverInfo"]["name"], "skincraft");
             let tools = rpc("tools/list", json!({}));
             assert!(tools["result"]["tools"].as_array().unwrap().len() >= 13);
+            // A name starting with `!` is a call expected to be refused.
             let mut call = |name: &str, args: Value| -> Value {
+                let (name, refused) = match name.strip_prefix('!') {
+                    Some(name) => (name, true),
+                    None => (name, false),
+                };
                 eprintln!("MCP smoke: {name}");
                 let v = rpc("tools/call", json!({"name":name,"arguments":args}));
                 assert!(v.get("error").is_none(), "{name}: {v}");
-                assert_ne!(v["result"]["isError"], true, "{name}: {v}");
+                assert_eq!(v["result"]["isError"] == true, refused, "{name}: {v}");
                 v["result"].clone()
             };
             call("open_file", json!({"path":svg}));
@@ -1361,7 +1444,107 @@ mod integration_tests {
                 "write_text",
                 json!({"path":script,"text":format!("{}\n-- SkinCraft MCP check\n",content["text"].as_str().unwrap())}),
             );
+            // Agent experience: health, scoped answers, preconditions, all-or-nothing changes,
+            // safe retries and an offscreen preview capture.
+            let text = |v: &Value| -> Value {
+                serde_json::from_str(
+                    v["content"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|c| c["type"] == "text")
+                        .unwrap()["text"]
+                        .as_str()
+                        .unwrap(),
+                )
+                .unwrap()
+            };
+            let status = text(&call("status", json!({})));
+            assert_eq!(status["app"], "SkinCraft");
+            assert!(status["revision"].as_u64().unwrap() > 0);
+            assert_eq!(status["pending"], false);
+            let images = text(&call("inspect_workspace", json!({"scope":"images"})));
+            assert!(!images["images"].as_array().unwrap().is_empty());
+            assert!(images["summary"].as_str().unwrap().contains("Mpx"));
+            let summary = call("inspect_workspace", json!({}));
+            assert!(
+                summary.to_string().len() < 20_000,
+                "the default answer stays small"
+            );
+            let read = text(&call("read_text", json!({"path":script})));
+            call(
+                "!write_text",
+                json!({"path":script,"text":"return nil","expect_hash":"0000000000000000"}),
+            );
+            let written = text(&call(
+                "write_text",
+                json!({"path":script,"text":format!("{}-- again\n",read["text"].as_str().unwrap()),"expect_hash":read["hash"]}),
+            ));
+            assert!(
+                written.get("text").is_none(),
+                "a write replies with its hash, not the text"
+            );
+            let sheet = home_client.join("generated sheet.svg");
+            std::fs::write(&sheet, r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><filter id="s"><feGaussianBlur stdDeviation="2"/></filter><rect x="8" y="8" width="48" height="48" fill="#ff6ea0" filter="url(#s)"/></svg>"##).unwrap();
+            let changes = json!([
+                {"op":"create","path":"Spare Module.lua","text":"return {}\n"},
+                {"op":"import","source":sheet,"path":"_generated sheet.svg"}
+            ]);
+            let before = status["revision"].as_u64().unwrap();
+            let applied = text(&call(
+                "apply",
+                json!({"changes":changes,"request_id":"two-new-files"}),
+            ));
+            assert_eq!(applied["applied"], 2);
+            assert_eq!(
+                applied["revision"].as_u64().unwrap(),
+                before + 2,
+                "one reload for the whole change (and one for the write)"
+            );
+            let again = call(
+                "apply",
+                json!({"changes":changes,"request_id":"two-new-files"}),
+            );
+            assert_eq!(
+                text(&again)["revision"],
+                applied["revision"],
+                "the same id replays the first reply"
+            );
+            let files = call("list_files", json!({}));
+            assert!(
+                files.to_string().contains("Spare Module.lua")
+                    && files.to_string().contains("\\\"added\\\":true")
+            );
+            // A change the skin cannot load undoes them all.
+            call(
+                "!apply",
+                json!({"changes":[
+                    {"op":"create","path":"Another.lua","text":"return {}"},
+                    {"op":"write","path":script,"text":"return (\n"}
+                ]}),
+            );
+            assert!(
+                !call("list_files", json!({}))
+                    .to_string()
+                    .contains("Another.lua")
+            );
+            let capture = call(
+                "capture_preview",
+                json!({"time":1.0,"width":256,"height":320}),
+            );
+            assert!(
+                capture["content"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c["type"] == "image")
+            );
             call("export_skin", json!({"path":home_client.join("exported")}));
+            let exported = home_client.join("exported/NoteSkins/dance/Dito");
+            assert!(
+                exported.join("Spare Module.lua").is_file()
+                    && exported.join("_generated sheet.svg").is_file()
+            );
             call("save_project", json!({}));
             // Independent artwork uses PhotoCraft and stays separate from noteskin overrides.
             call("open_file", json!({"path":image}));

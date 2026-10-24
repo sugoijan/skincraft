@@ -10,6 +10,8 @@ pub struct File {
     pub inherited: bool,
     pub image: bool,
     pub text: bool,
+    /// The project's own file, not in the source folder ([`crate::project::Added`]).
+    pub added: bool,
 }
 
 pub fn image(path: &Path) -> bool {
@@ -63,11 +65,55 @@ pub fn inventory(project: &Project) -> Result<Vec<File>, String> {
                 inherited: *index != 0,
                 image: is_image,
                 text,
+                added: false,
             });
         }
     }
     out.sort_by(|a, b| (a.inherited, &a.owner, &a.name).cmp(&(b.inherited, &b.owner, &b.name)));
     Ok(out)
+}
+
+/// Whether a file of this name is edited as text.
+pub fn is_text(name: &str) -> bool {
+    let path = Path::new(name);
+    ddi_noteskin::import::kept_text(name)
+        || name.to_ascii_lowercase().ends_with(".svg")
+        || matches!(
+            path.extension().and_then(|s| s.to_str()),
+            Some("md" | "toml" | "json")
+        )
+        || path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.starts_with("LICENSE"))
+}
+
+/// The inventory with the project's own files (`added`) in its skin's folder.
+pub fn with_added(
+    mut files: Vec<File>,
+    project: &Project,
+    added: &crate::project::AddedFiles,
+) -> Vec<File> {
+    let Some(base) = project.skins.first() else {
+        return files;
+    };
+    for path in added.keys() {
+        let Ok(rel) = path.strip_prefix(&base.dir) else {
+            continue;
+        };
+        let name = rel.to_string_lossy().replace('\\', "/");
+        files.push(File {
+            path: path.clone(),
+            image: image(path),
+            text: is_text(&name),
+            name,
+            owner: base.name.clone(),
+            inherited: false,
+            added: true,
+        });
+    }
+    files.sort_by(|a, b| (a.inherited, &a.owner, &a.name).cmp(&(b.inherited, &b.owner, &b.name)));
+    files
 }
 
 pub fn read_text(path: &Path) -> Result<String, String> {

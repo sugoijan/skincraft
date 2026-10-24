@@ -27,6 +27,8 @@ mod parameters;
 #[path = "references.rs"]
 #[cfg(feature = "skincraft")]
 mod references;
+#[path = "resources.rs"]
+mod resources;
 #[cfg(feature = "skincraft")]
 #[path = "theme.rs"]
 pub mod theme;
@@ -111,6 +113,10 @@ pub struct Panel {
     reloads: u64,
     inspect_lane: usize,
     inspect_part: String,
+    /// The project's own files, beside its skin's (`resources.rs`).
+    added: project::AddedFiles,
+    /// What the skin's images cost at the last reload (`ddi_noteskin::report`).
+    images: ddi_noteskin::report::ImageReport,
     #[cfg(feature = "skincraft")]
     vector: Option<vector::Workspace>,
 }
@@ -190,6 +196,8 @@ impl Panel {
             reloads: 0,
             inspect_lane: 0,
             inspect_part: "Tap Note".into(),
+            added: project::AddedFiles::new(),
+            images: Default::default(),
             #[cfg(feature = "skincraft")]
             vector: None,
         };
@@ -248,19 +256,25 @@ impl Panel {
         };
         let mut original = original;
         original.values = values;
-        let (project, prepared) = if !changed_project && !self.editor.edits.is_empty() {
-            original.prepare_texts(
-                &layout,
-                self.options.play.scroll.reverse,
-                &self.editor.edits,
-                &self.candidate_dir(),
-            )?
-        } else {
-            let selected = original.clone().with_parameters(&original.values);
-            let prepared = selected.prepare(&layout, self.options.play.scroll.reverse)?;
-            (selected, prepared)
-        };
-        let files = files::inventory(&project)?;
+        let (project, prepared) =
+            if !changed_project && !(self.editor.edits.is_empty() && self.added.is_empty()) {
+                original.prepare_added(
+                    &layout,
+                    self.options.play.scroll.reverse,
+                    &self.editor.edits,
+                    &self.added,
+                    &self.candidate_dir(),
+                )?
+            } else {
+                let selected = original.clone().with_parameters(&original.values);
+                let prepared = selected.prepare(&layout, self.options.play.scroll.reverse)?;
+                (selected, prepared)
+            };
+        if changed_project {
+            self.added.clear();
+        }
+        let files = files::with_added(files::inventory(&project)?, &project, &self.added);
+        self.images = prepared.report.clone();
         if changed_project {
             self.edits.clear();
             self.bindings.clear();
@@ -693,6 +707,118 @@ impl Panel {
         ui.small(&self.message);
     }
 
+    /// The preview's last frame, read back: its size and tightly packed RGBA rows (encoded
+    /// sRGB values, as shown).
+    pub(super) fn preview_rgba(&self) -> Result<(u32, u32, Vec<u8>), String> {
+        let texture = self
+            .preview
+            .texture()
+            .ok_or("The preview has not drawn yet")?;
+        let (w, h) = (texture.width(), texture.height());
+        let row = (w * 4).div_ceil(256) * 256;
+        let buffer = self.rs.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("skincraft-preview-readback"),
+            size: u64::from(row * h),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self.rs.device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            texture.size(),
+        );
+        self.rs.queue.submit([encoder.finish()]);
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.rs
+            .device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|e| e.to_string())?;
+        let mapped = slice.get_mapped_range().map_err(|e| e.to_string())?;
+        let mut out = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h as usize {
+            out.extend_from_slice(&mapped[y * row as usize..][..w as usize * 4]);
+        }
+        Ok((w, h, out))
+    }
+
+    /// Draws the preview offscreen at `time` and `size` pixels, as the panel draws it, without a
+    /// window frame: the game's renderer into its texture, read back as a PNG.
+    pub(super) fn capture_preview(
+        &mut self,
+        time: f64,
+        size: [u32; 2],
+    ) -> Result<(Vec<u8>, u32, u32), String> {
+        if !time.is_finite() || time < 0.0 {
+            return Err("Invalid time".into());
+        }
+        let size = [size[0].clamp(64, 2048), size[1].clamp(64, 2048)];
+        self.preview.set_options(self.options.clone());
+        self.preview.seek(time.min(self.duration));
+        let mut encoder = self
+            .rs
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("skincraft-capture"),
+            });
+        self.preview
+            .draw(&self.rs.device, &self.rs.queue, &mut encoder, size, 0.0);
+        self.rs.queue.submit([encoder.finish()]);
+        let (w, h, rgba) = self.preview_rgba()?;
+        let image = image::RgbaImage::from_raw(w, h, rgba).ok_or("Bad preview size")?;
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .map_err(|e| e.to_string())?;
+        // The panel draws its own size again on its next frame.
+        self.registered = None;
+        Ok((png, w, h))
+    }
+
+    /// Why an export cannot run now: each blocker with its file and stage.
+    pub(super) fn export_blockers(&self) -> Vec<serde_json::Value> {
+        let mut out = Vec::new();
+        #[cfg(feature = "skincraft")]
+        if let Some(v) = &self.vector {
+            for (path, error) in &v.errors {
+                out.push(
+                    serde_json::json!({"path": path, "stage": "vector export", "error": error}),
+                );
+            }
+        }
+        if self.text_reload.is_some() {
+            out.push(serde_json::json!({"stage": "pending reload", "error": "drafts changed and wait for their reload"}));
+        }
+        for (path, text) in &self.editor.edits {
+            if self.applied_texts.get(path) != Some(text) {
+                out.push(serde_json::json!({"path": path, "stage": "draft not loaded", "error": self.failure}));
+            }
+        }
+        for path in self
+            .applied_texts
+            .keys()
+            .filter(|p| !self.editor.edits.contains_key(*p))
+        {
+            out.push(serde_json::json!({"path": path, "stage": "discarded draft not reloaded"}));
+        }
+        if self
+            .project
+            .as_ref()
+            .is_some_and(|p| p.values != self.preview_parameters)
+        {
+            out.push(serde_json::json!({"stage": "parameters not loaded"}));
+        }
+        out
+    }
+
     fn draw(&mut self, ui: &mut egui::Ui) {
         let width = ui.available_width().clamp(100.0, 700.0);
         let height = (ui.available_height() - 155.0).clamp(210.0, 600.0);
@@ -777,6 +903,49 @@ impl Panel {
 
     fn footer(&mut self, app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         self.element_inspector(app, ui);
+        // What each image costs (DDI's report): the largest first, against the skin's budget.
+        let images = &self.images;
+        ui.collapsing(
+            format!(
+                "Images · {:.0}% of the budget",
+                100.0 * images.pixels() as f64 / images.budget().max(1) as f64
+            ),
+            |ui| {
+                ui.small(images.summary());
+                let mut sorted: Vec<_> = images.images.iter().collect();
+                sorted.sort_by_key(|i| std::cmp::Reverse(i.pixels()));
+                egui::ScrollArea::vertical()
+                    .id_salt("image-costs")
+                    .max_height(160.0)
+                    .show(ui, |ui| {
+                        for i in sorted {
+                            use ddi_noteskin::report::Outcome;
+                            let outcome = match &i.outcome {
+                                Outcome::Kept => String::new(),
+                                Outcome::ByBrowser => " · drawn by the browser".into(),
+                                Outcome::LeftOut => " · left out: over the budget".into(),
+                                Outcome::Failed(why) => format!(" · failed: {why}"),
+                            };
+                            let text = format!(
+                                "{} · {}×{} at {:.1}× · {:.2} Mpx{outcome}",
+                                i.path,
+                                i.decoded.0,
+                                i.decoded.1,
+                                i.scale(),
+                                i.pixels() as f64 / f64::from(1 << 20)
+                            );
+                            if matches!(i.outcome, Outcome::Kept) {
+                                ui.small(text);
+                            } else {
+                                ui.colored_label(
+                                    ui.visuals().warn_fg_color,
+                                    egui::RichText::new(text).small(),
+                                );
+                            }
+                        }
+                    });
+            },
+        );
         ui.collapsing("Lane coverage and loader messages", |ui| {
             if let Some(p) = &self.project {
                 for c in &p.coverage {
@@ -800,13 +969,34 @@ impl Panel {
                     .as_ref()
                     .ok_or_else(|| "Load a skin first".to_string())
                     .and_then(|p| {
-                        if self.has_pending_sources() {
-                            return Err(
-                                "Wait for pending reloads and fix source errors before exporting"
-                                    .into(),
-                            );
+                        let blockers = self.export_blockers();
+                        if !blockers.is_empty() {
+                            let list: Vec<String> = blockers
+                                .iter()
+                                .map(|b| {
+                                    let path = b["path"]
+                                        .as_str()
+                                        .and_then(|p| Path::new(p).file_name())
+                                        .map(|n| format!("{}: ", n.to_string_lossy()))
+                                        .unwrap_or_default();
+                                    let error = b["error"]
+                                        .as_str()
+                                        .map(|e| format!(" ({e})"))
+                                        .unwrap_or_default();
+                                    format!(
+                                        "{path}{}{error}",
+                                        b["stage"].as_str().unwrap_or_default()
+                                    )
+                                })
+                                .collect();
+                            return Err(format!("Not exported yet: {}", list.join("; ")));
                         }
-                        p.export_texts(Path::new(&self.output), &self.edits, &self.editor.edits)
+                        p.export_added(
+                            Path::new(&self.output),
+                            &self.edits,
+                            &self.editor.edits,
+                            &self.added,
+                        )
                     });
                 match result {
                     Ok(()) => {
@@ -1114,36 +1304,15 @@ mod tests {
     }
 
     pub(super) fn field_pixels(panel: &Panel) -> Vec<u8> {
-        let texture = panel.preview.texture().unwrap();
-        let row = (texture.width() * 4).div_ceil(256) * 256;
-        let buffer = panel.rs.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("authoring-test-readback"),
-            size: u64::from(row * texture.height()),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = panel.rs.device.create_command_encoder(&Default::default());
-        encoder.copy_texture_to_buffer(
-            texture.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(row),
-                    rows_per_image: Some(texture.height()),
-                },
-            },
-            texture.size(),
-        );
-        panel.rs.queue.submit([encoder.finish()]);
-        let slice = buffer.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
-        panel
-            .rs
-            .device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .unwrap();
-        slice.get_mapped_range().unwrap().to_vec()
+        let (w, h, rows) = panel.preview_rgba().unwrap();
+        let row = (w * 4).div_ceil(256) * 256;
+        // As copied: rows padded to 256 bytes.
+        let mut out = vec![0; (row * h) as usize];
+        for y in 0..h as usize {
+            out[y * row as usize..][..w as usize * 4]
+                .copy_from_slice(&rows[y * w as usize * 4..][..w as usize * 4]);
+        }
+        out
     }
 
     #[test]

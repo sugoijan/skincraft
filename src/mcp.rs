@@ -24,8 +24,67 @@ pub struct PathParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WriteParams {
+    /// A project text file: absolute, or relative to the skin's folder.
     pub path: String,
     pub text: String,
+    /// The `hash` read_text returned: refused if the draft changed since (no lost edits).
+    pub expect_hash: Option<String>,
+    /// Return the whole text (default: only its hash and size).
+    pub echo: Option<bool>,
+    /// Any unique string per intended edit; sending the same id again returns the first reply
+    /// instead of applying twice (safe retries after a timeout).
+    pub request_id: Option<String>,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReadParams {
+    pub path: String,
+    /// First line returned (1-based); with end_line, a slice of a large file.
+    pub start_line: Option<u64>,
+    pub end_line: Option<u64>,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InspectParams {
+    /// summary (default), files, parameters, preview, images (each image's cost, hash and budget share), editors (both native editors' full state) or all.
+    pub scope: Option<String>,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyParams {
+    /// Changes applied as one revision with one preview reload; if any fails or the skin no longer loads, none applies. Each is {"op":"write","path","text","expect_hash"?}, {"op":"create","path","text"}, {"op":"import","source","path","replace"?}, {"op":"remove","path"} or {"op":"discard","path"}. Paths are in the skin's folder (relative or absolute); import sources must be readable.
+    pub changes: Vec<Value>,
+    pub request_id: Option<String>,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FileParams {
+    /// A path in the skin's folder, relative to it or absolute.
+    pub path: String,
+    /// create_file: the new file's text.
+    pub text: Option<String>,
+    /// import_file: the file copied in (beneath a read root).
+    pub source: Option<String>,
+    /// import_file: replace a file the project imported before at this path.
+    pub replace: Option<bool>,
+    pub request_id: Option<String>,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CaptureParams {
+    /// Seconds into the demo loop (default: the preview's current time).
+    pub time: Option<f64>,
+    /// Pixels, 64 to 2048 (defaults 480 × 640).
+    pub width: Option<u64>,
+    pub height: Option<u64>,
+    /// Optional PNG copy beneath the write root.
+    pub path: Option<String>,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExportParams {
+    pub path: String,
+    pub request_id: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -35,6 +94,7 @@ pub struct EditorParams {
     /// engine.commands, engine.execute, document.inspect, ui.inspect, ui.set, ui.pointer, ui.tool.select, ui.tool.list, ui.menu.list or ui.render. Use engine.execute with params {command, params}. Pointer coordinates are document coordinates by default.
     pub method: String,
     pub params: Option<Value>,
+    pub request_id: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -47,6 +107,13 @@ pub struct PreviewParams {
     pub ruleset: Option<String>,
     /// Parameter patch keyed by the ids from inspect_workspace. Null resets one to its default.
     pub parameters: Option<std::collections::BTreeMap<String, Value>>,
+    /// dance-single, dance-solo, dance-double, danoni-5, danoni-7, danoni-9A, danoni-9B, pump-single or pump-double.
+    pub layout: Option<String>,
+    pub reverse: Option<bool>,
+    /// 0.5 to 4 (an x-mod).
+    pub scroll_speed: Option<f64>,
+    /// The background's brightness, 0 to 1.
+    pub backdrop: Option<f64>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -120,14 +187,25 @@ impl SkinCraftMcp {
 #[tool_router(router = router)]
 impl SkinCraftMcp {
     #[tool(
-        description = "Inspect SkinCraft's project, preview, errors, source bindings and both native editor states.",
+        description = "Health and identity in one small answer: app version, pid, project home and skin, active editor, preview revision, draft counts, whether anything is pending, the last failure and the images' budget. Check it first, and after a timeout before retrying.",
         annotations(read_only_hint = true, idempotent_hint = true)
     )]
-    async fn inspect_workspace(&self) -> CallToolResult {
-        self.call("inspect", json!({})).await
+    async fn status(&self) -> CallToolResult {
+        self.call("status", json!({})).await
     }
     #[tool(
-        description = "List every image, script, metrics file and inherited resource in the current noteskin.",
+        description = "Inspect one part of the workspace: summary (default, small), files, parameters, preview, images (each image's decoded size, hash, budget share and why one was refused), editors (both native editors' full state, large) or all.",
+        annotations(read_only_hint = true, idempotent_hint = true)
+    )]
+    async fn inspect_workspace(&self, Parameters(p): Parameters<InspectParams>) -> CallToolResult {
+        self.call(
+            "inspect",
+            json!({"scope":p.scope.unwrap_or("summary".into())}),
+        )
+        .await
+    }
+    #[tool(
+        description = "List every image, script, metrics file and inherited resource in the current noteskin, with whether the project added it and whether it has a draft.",
         annotations(read_only_hint = true, idempotent_hint = true)
     )]
     async fn list_files(&self) -> CallToolResult {
@@ -146,18 +224,70 @@ impl SkinCraftMcp {
         self.call("load_skin", json!({"path":p.path})).await
     }
     #[tool(
-        description = "Read the current draft of a project text file, including unsaved edits.",
+        description = "Read the current draft of a project text file (including files the project added), with its hash for write_text's expect_hash; start_line/end_line read a slice.",
         annotations(read_only_hint = true, idempotent_hint = true)
     )]
-    async fn read_text(&self, Parameters(p): Parameters<PathParams>) -> CallToolResult {
-        self.call("read_text", json!({"path":p.path})).await
+    async fn read_text(&self, Parameters(p): Parameters<ReadParams>) -> CallToolResult {
+        self.call(
+            "read_text",
+            json!({"path":p.path,"start_line":p.start_line,"end_line":p.end_line}),
+        )
+        .await
     }
     #[tool(
-        description = "Edit a project script, metrics or SVG text draft and reload the game preview. Invalid drafts remain editable and the last valid preview is retained."
+        description = "Edit a project script, metrics or SVG text draft and reload the game preview at once. Replies with the new hash, size and preview revision (not the text, unless echo). If the skin no longer loads, the edit is refused and the last valid preview kept."
     )]
     async fn write_text(&self, Parameters(p): Parameters<WriteParams>) -> CallToolResult {
-        self.call("write_text", json!({"path":p.path,"text":p.text}))
+        self.call("write_text", json!({"path":p.path,"text":p.text,"expect_hash":p.expect_hash,"echo":p.echo,"requestId":p.request_id}))
             .await
+    }
+    #[tool(
+        description = "Apply several file changes as one revision with one preview reload: writes, new text files, imported files, removals and discarded drafts. All or nothing: if one fails, or the skin does not load with them, nothing changes and the last working preview stays. The source folder is never written: added files live with the project and reach the preview and exports."
+    )]
+    async fn apply(&self, Parameters(p): Parameters<ApplyParams>) -> CallToolResult {
+        self.call(
+            "apply",
+            json!({"changes":p.changes,"requestId":p.request_id}),
+        )
+        .await
+    }
+    #[tool(
+        description = "Create a new text file (Lua, metrics, SVG…) in the skin's folder, or one overriding an inherited file of that name; refused if the skin already has it. Reloads the preview."
+    )]
+    async fn create_file(&self, Parameters(p): Parameters<FileParams>) -> CallToolResult {
+        self.call(
+            "create_file",
+            json!({"path":p.path,"text":p.text,"requestId":p.request_id}),
+        )
+        .await
+    }
+    #[tool(
+        description = "Copy a file (a generated SVG sheet, a PNG, a model) into the skin's folder as the project's own; never over a source file. replace changes one imported before. Reloads the preview."
+    )]
+    async fn import_file(&self, Parameters(p): Parameters<FileParams>) -> CallToolResult {
+        self.call(
+            "import_file",
+            json!({"path":p.path,"source":p.source,"replace":p.replace,"requestId":p.request_id}),
+        )
+        .await
+    }
+    #[tool(
+        description = "Remove a file the project added (an inherited file it overrode shows again). Reloads the preview."
+    )]
+    async fn remove_file(&self, Parameters(p): Parameters<FileParams>) -> CallToolResult {
+        self.call(
+            "remove_file",
+            json!({"path":p.path,"requestId":p.request_id}),
+        )
+        .await
+    }
+    #[tool(description = "Drop a source file's text draft, back to the file. Reloads the preview.")]
+    async fn discard_draft(&self, Parameters(p): Parameters<FileParams>) -> CallToolResult {
+        self.call(
+            "discard_draft",
+            json!({"path":p.path,"requestId":p.request_id}),
+        )
+        .await
     }
     #[tool(
         description = "Switch a project SVG from native vector editing to editable source text, preserving its last accepted SVG. Releases its session vector document/history."
@@ -170,10 +300,10 @@ impl SkinCraftMcp {
         description = "Discover and run native editor commands, inspect objects/layers, select tools, or draw through ui.pointer. Use engine.commands first for exact command ids and parameters. File operations use SkinCraft tools."
     )]
     async fn editor_request(&self, Parameters(p): Parameters<EditorParams>) -> CallToolResult {
-        self.call("editor_request",json!({"editor":p.editor.unwrap_or("active".into()),"method":p.method,"params":p.params.unwrap_or(json!({}))})).await
+        self.call("editor_request",json!({"editor":p.editor.unwrap_or("active".into()),"method":p.method,"params":p.params.unwrap_or(json!({})),"requestId":p.request_id})).await
     }
     #[tool(
-        description = "Save the whole SkinCraft project with editable vector/raster sources and script drafts."
+        description = "Save the whole SkinCraft project with editable vector/raster sources, script drafts and added files."
     )]
     async fn save_project(&self) -> CallToolResult {
         self.call("save_project", json!({})).await
@@ -185,23 +315,38 @@ impl SkinCraftMcp {
         self.call("save_file", json!({"path":p.path})).await
     }
     #[tool(
-        description = "Export a game-loadable noteskin into a new destination below the write root. Refuses existing destinations or invalid/pending source changes. SVGs remain SVG."
+        description = "Export a game-loadable noteskin into a new destination below the write root, with drafts and added files. A pending reload runs first; if a source still cannot load, the error lists each blocker with its file and stage."
     )]
-    async fn export_skin(&self, Parameters(p): Parameters<PathParams>) -> CallToolResult {
-        self.call("export_skin", json!({"path":p.path})).await
-    }
-    #[tool(
-        description = "Set declared skin parameters, pause/resume or seek the shared game preview. Parameters are preview choices; exported defaults stay unchanged."
-    )]
-    async fn set_preview(&self, Parameters(p): Parameters<PreviewParams>) -> CallToolResult {
+    async fn export_skin(&self, Parameters(p): Parameters<ExportParams>) -> CallToolResult {
         self.call(
-            "preview",
-            json!({"running":p.running,"time":p.time,"autoplay_flashes":p.autoplay_flashes,"ruleset":p.ruleset,"parameters":p.parameters}),
+            "export_skin",
+            json!({"path":p.path,"requestId":p.request_id}),
         )
         .await
     }
     #[tool(
-        description = "Capture the whole SkinCraft window, including active editor, files and actual game preview. Returns an inline PNG. The window must be visible."
+        description = "Set declared skin parameters, the layout, reverse, scroll speed, backdrop and ruleset, pause/resume or seek the shared game preview. Parameters are preview choices; exported defaults stay unchanged."
+    )]
+    async fn set_preview(&self, Parameters(p): Parameters<PreviewParams>) -> CallToolResult {
+        self.call(
+            "preview",
+            json!({"running":p.running,"time":p.time,"autoplay_flashes":p.autoplay_flashes,"ruleset":p.ruleset,"parameters":p.parameters,"layout":p.layout,"reverse":p.reverse,"scroll_speed":p.scroll_speed,"backdrop":p.backdrop}),
+        )
+        .await
+    }
+    #[tool(
+        description = "Render the game preview offscreen at a time and size and return it as a PNG, with the revision and images hash it shows. Needs no visible window; screenshot captures the whole window instead.",
+        annotations(read_only_hint = true)
+    )]
+    async fn capture_preview(&self, Parameters(p): Parameters<CaptureParams>) -> CallToolResult {
+        self.call(
+            "capture_preview",
+            json!({"time":p.time,"width":p.width,"height":p.height,"path":p.path}),
+        )
+        .await
+    }
+    #[tool(
+        description = "Capture the whole SkinCraft window, including active editor, files and actual game preview. Returns an inline PNG. The window must be visible; capture_preview renders the preview alone without it."
     )]
     async fn screenshot(&self, Parameters(p): Parameters<ScreenshotParams>) -> CallToolResult {
         self.call("screenshot", json!({"path":p.path})).await
@@ -213,7 +358,7 @@ impl ServerHandler for SkinCraftMcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("skincraft",env!("CARGO_PKG_VERSION")))
-            .with_instructions("SkinCraft noteskin workspace. Start with inspect_workspace and list_files. Open project images to edit SVGs in VectorCraft or bitmaps in PhotoCraft; editor_request engine.commands discovers exact native command ids. Scripts and metrics use read_text/write_text. Save project preserves editable sources; export_skin writes a new runtime tree. Default file reads are limited to bundled noteskins and the current project's files; writes are limited to the project home. SKINCRAFT_READ_ROOT/WRITE_ROOT configure additional working roots when starting the app. Never retry a timed-out edit blindly; inspect state first.")
+            .with_instructions("SkinCraft noteskin workspace. Start with status, then inspect_workspace (scope summary, files, images…) and list_files. Open project images to edit SVGs in VectorCraft or bitmaps in PhotoCraft; editor_request engine.commands discovers exact native command ids. Scripts and metrics use read_text/write_text (pass read_text's hash as expect_hash). New and generated files: create_file, import_file, or several changes as one revision with apply. capture_preview renders the game preview offscreen. Save project preserves editable sources; export_skin writes a new runtime tree. Default file reads are limited to bundled noteskins and the current project's files; writes are limited to the project home. SKINCRAFT_READ_ROOT/WRITE_ROOT configure additional working roots when starting the app. Give mutating calls a request_id: retrying with the same id after a timeout returns the first reply instead of applying twice; otherwise check status before retrying.")
     }
 }
 
