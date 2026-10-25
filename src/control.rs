@@ -182,6 +182,24 @@ impl host::SkinCraft {
 
     pub(super) fn control_tick(&mut self, ctx: &egui::Context) {
         self.captures.retain(|p| p.expires > Instant::now());
+        // The export under way has ended: the requests waiting for it answered.
+        if let Some((path, revision, result)) = self.panel.take_export_ended() {
+            let reply = match result {
+                Ok(()) => json!({"ok":true,"result":{"path":path,"revision":revision}}),
+                Err(e) => json!({"ok":false,"error":e}),
+            };
+            for (id, sender) in self.exports.drain(..) {
+                if let Some(id) = id
+                    && reply["ok"] == true
+                {
+                    if self.replies.len() >= 64 {
+                        self.replies.pop_front();
+                    }
+                    self.replies.push_back((id, reply.clone()));
+                }
+                let _ = sender.send(reply.clone());
+            }
+        }
         for _ in 0..8 {
             let request = self
                 .control
@@ -207,8 +225,19 @@ impl host::SkinCraft {
                 let _ = request.reply.send(reply);
                 continue;
             }
+            // Sent again while its export is under way: answered with the first.
+            if request.method == "export_skin"
+                && id.is_some()
+                && self.exports.iter().any(|(seen, _)| *seen == id)
+            {
+                self.exports.push((id, request.reply));
+                continue;
+            }
             let result = self.request(&request.method, request.params.clone(), ctx);
             match result {
+                Ok(result) if request.method == "export_skin" && result["pending"] == true => {
+                    self.exports.push((id, request.reply));
+                }
                 Ok(result) if request.method == "screenshot" && result["pending"] == true => {
                     let token = self.capture_id;
                     let path = request.params["path"].as_str().map(PathBuf::from);
@@ -315,15 +344,10 @@ impl host::SkinCraft {
                 if self.panel.text_reload.is_some() { self.panel.text_reload = Some(Instant::now() - Duration::from_secs(1)); self.panel.workspace_tick(&mut self.photo, ctx); }
                 let blockers = self.panel.export_blockers();
                 if !blockers.is_empty() { return Err(json!({"message":"Export needs every source loaded first","blockers":blockers}).to_string()); }
-                // Kept for status: an export that outlives its request's timeout still says
-                // how it ended.
-                let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-                let outcome = self.export_skin(&p);
-                self.panel.last_export = Some(match &outcome {
-                    Ok(()) => json!({"ok":true,"path":p,"revision":self.panel.reloads,"finishedAt":at}),
-                    Err(e) => json!({"ok":false,"path":p,"error":e,"finishedAt":at}),
-                });
-                outcome?; Ok(json!({"path":p,"revision":self.panel.reloads}))
+                // On a thread of its own: answered when it ends (`control_tick`), status's
+                // `exporting` meanwhile and `lastExport` after, even past the request's timeout.
+                self.export_skin(&p)?;
+                Ok(json!({"pending":true,"path":p,"revision":self.panel.reloads}))
             }
             "capture_preview" => {
                 let time = params["time"].as_f64().unwrap_or(self.panel.time);
@@ -391,7 +415,7 @@ impl host::SkinCraft {
             "failure": self.panel.failure,
             "warnings": self.warnings(),
             "adopted": self.panel.adopted,
-            "lastExport": self.panel.last_export,
+            "exporting": self.panel.exporting(), "lastExport": self.panel.last_export,
             "images": self.panel.images.summary(),
             "preview": {"time": self.panel.time, "running": self.panel.running, "ruleset": self.panel.options.rules.id},
         })

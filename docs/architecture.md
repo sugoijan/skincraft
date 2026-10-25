@@ -320,5 +320,10 @@ create, import, remove, discard) and reloads once; a failure undoes them.
 `control.rs` answers `status`, scoped `inspect`, compact `write_text`,
 `apply`, `capture_preview` (the preview drawn offscreen and read back),
 `export_skin` blockers, and replays the reply to a repeated `requestId`.
+An export runs on a thread of its own (`Panel::start_export`, of the project
+and drafts cloned when it began): it loads the skin through the game's
+loader up to three times, too long to hold the window's frames, so
+`export_skin` is answered when it ends, as a screenshot is, and `status`
+reports `exporting` meanwhile.
 The preview panel lists what each of the skin's images costs
 (`ddi_noteskin::report`).

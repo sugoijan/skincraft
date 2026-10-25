@@ -220,7 +220,7 @@ impl SkinCraftMcp {
 #[tool_router(router = router)]
 impl SkinCraftMcp {
     #[tool(
-        description = "Health and identity in one small answer: app version, pid, project home and skin, active editor, preview revision, draft counts, whether anything is pending, the last failure, the skin's nonfatal warnings (scripts' missing files, failed commands), files adopted from the skin's folder, how the last export ended, and the images' budget. Check it first, and after a timeout before retrying.",
+        description = "Health and identity in one small answer: app version, pid, project home and skin, active editor, preview revision, draft counts, whether anything is pending, the last failure, the skin's nonfatal warnings (scripts' missing files, failed commands), files adopted from the skin's folder, an export under way and how the last one ended, and the images' budget. Check it first, and after a timeout before retrying.",
         annotations(read_only_hint = true, idempotent_hint = true)
     )]
     async fn status(&self) -> CallToolResult {
@@ -356,7 +356,7 @@ impl SkinCraftMcp {
         self.call("save_file", json!({"path":p.path})).await
     }
     #[tool(
-        description = "Export a game-loadable noteskin into a new destination below the write root, with drafts and added files, without the files the project left out. A pending reload runs first; if a source still cannot load, the error lists each blocker with its file and stage. If the request times out, status's lastExport says how the export ended: check it before exporting into the same destination again."
+        description = "Export a game-loadable noteskin into a new destination below the write root, with drafts and added files, without the files the project left out. A pending reload runs first; if a source still cannot load, the error lists each blocker with its file and stage. The export runs beside the editor, which stays answerable: it exports the project as it was when the export began, one export at a time. The reply comes when it ends; if the request times out first, status's exporting says it is still under way and lastExport how it ended: check it before exporting into the same destination again (retrying with the same request_id waits for the same export)."
     )]
     async fn export_skin(&self, Parameters(p): Parameters<ExportParams>) -> CallToolResult {
         self.call(

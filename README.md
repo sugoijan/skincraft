@@ -111,8 +111,11 @@ if the window stops processing frames. A timed-out dispatched edit is never
 replayed automatically. Give mutating calls a `request_id`: sending the same
 id again returns the first reply instead of applying twice (the latest 64
 are kept; a refused request is not, so it may be corrected and sent again
-with its id); without one, check `status` before retrying. An export that
-outlives its request still records how it ended in `status`'s `lastExport`.
+with its id); without one, check `status` before retrying. An export runs
+beside the editor, which stays answerable (one at a time, of the project as
+it was when it began); its reply comes when it ends. One that outlives its
+request shows in `status`'s `exporting` and then records how it ended in
+`lastExport`; the same `request_id` sent again waits for it.
 
 Files an agent creates or imports (`create_file`, `import_file`, `apply`)
 belong to the project, never to the source folder: a text is a draft, an

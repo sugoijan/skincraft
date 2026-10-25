@@ -14,6 +14,8 @@ pub struct SkinCraft {
     pub(super) capture_id: u64,
     /// Replies to requests that carried an id, the latest 64 (`control.rs`).
     pub(super) replies: std::collections::VecDeque<(String, serde_json::Value)>,
+    /// Requests waiting for the export under way to end, with their ids (`control.rs`).
+    pub(super) exports: Vec<(Option<String>, std::sync::mpsc::Sender<serde_json::Value>)>,
     references_at: Instant,
 }
 
@@ -87,6 +89,7 @@ impl SkinCraft {
             captures: Vec::new(),
             capture_id: 0,
             replies: Default::default(),
+            exports: Vec::new(),
             references_at: Instant::now(),
         };
         references::restore(&mut app)?;
@@ -929,24 +932,15 @@ impl SkinCraft {
         Ok(())
     }
 
+    /// Begins exporting the project to `path` on a thread of its own (`Panel::start_export`),
+    /// its drawings and vectors as they are now.
     pub(super) fn export_skin(&mut self, path: &Path) -> Result<(), String> {
         self.panel.vector_tick();
         self.panel.update_artwork(&mut self.photo)?;
         if self.panel.has_pending_sources() {
             return Err("Fix source errors and wait for pending reloads before export".into());
         }
-        self.panel
-            .project
-            .as_ref()
-            .ok_or("No noteskin")?
-            .export_added(
-                path,
-                &self.panel.edits,
-                &self.panel.editor.edits,
-                &self.panel.added,
-            )?;
-        self.panel.message = format!("Exported skin to {}", path.display());
-        Ok(())
+        self.panel.start_export(path)
     }
 
     pub(super) fn save_copy(&mut self, path: &Path) -> Result<(), String> {
@@ -1087,6 +1081,7 @@ mod integration_tests {
         );
         let out = root.join("export");
         h.state_mut().export_skin(&out).unwrap();
+        h.state_mut().panel.finish_export();
         let exported = out.join("NoteSkins/dance/Test");
         assert_eq!(
             std::fs::read_to_string(exported.join("Extra/Module.lua")).unwrap(),
@@ -1108,7 +1103,7 @@ mod integration_tests {
         h.state_mut().load_skin(&skin).unwrap();
         h.run_steps(3);
         let context = egui::Context::default();
-        let mut request =
+        let request =
             |h: &mut egui_kittest::Harness<'static, SkinCraft>, method: &str, params: Value| {
                 h.state_mut().request(method, params, &context)
             };
@@ -1123,19 +1118,36 @@ mod integration_tests {
         // Left out: no longer the project's, not exported; the folder untouched.
         request(&mut h, "remove_file", json!({"path":"notes.txt"})).unwrap();
         assert!(!names(&h).contains(&"notes.txt".to_string()));
-        request(&mut h, "export_skin", json!({"path":home.join("left-out")})).unwrap();
+        // On a thread of its own: status says so meanwhile, and a second export waits its turn.
+        let started =
+            request(&mut h, "export_skin", json!({"path":home.join("left-out")})).unwrap();
+        assert_eq!(started["pending"], true);
+        let (tx, answered) = std::sync::mpsc::channel();
+        h.state_mut().exports.push((None, tx));
+        let status = request(&mut h, "status", json!({})).unwrap();
+        assert_eq!(status["exporting"]["path"], json!(home.join("left-out")));
+        let second = request(&mut h, "export_skin", json!({"path":home.join("second")}));
+        assert!(second.unwrap_err().contains("under way"));
+        h.state_mut().panel.finish_export();
+        h.state_mut().control_tick(&context);
+        let reply = answered.try_recv().unwrap();
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(reply["result"]["path"], json!(home.join("left-out")));
+        assert!(!home.join("second").exists());
         let exported = home.join("left-out/NoteSkins/dance/Test");
         assert!(exported.join("Down Tap Note.png").is_file());
         assert!(!exported.join("notes.txt").exists());
         assert!(skin.join("notes.txt").is_file(), "the folder untouched");
         let status = request(&mut h, "status", json!({})).unwrap();
         assert_eq!(status["lastExport"]["ok"], true);
+        assert!(status["exporting"].is_null());
         assert!(request(&mut h, "remove_file", json!({"path":"notes.txt"})).is_err());
         // Kept with the project, and back in once restored.
         request(&mut h, "save_project", json!({})).unwrap();
         request(&mut h, "restore_file", json!({"path":"notes.txt"})).unwrap();
         assert!(names(&h).contains(&"notes.txt".to_string()));
         request(&mut h, "export_skin", json!({"path":home.join("restored")})).unwrap();
+        h.state_mut().panel.finish_export();
         assert!(
             home.join("restored/NoteSkins/dance/Test/notes.txt")
                 .is_file()

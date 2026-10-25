@@ -119,13 +119,144 @@ pub struct Panel {
     /// how the last export ended: what `status` reports.
     adopted: Vec<PathBuf>,
     last_export: Option<serde_json::Value>,
+    /// An export under way ([`Panel::start_export`]), and the last one's end until the host
+    /// takes it (to answer the request that began it).
+    exporting: Option<Exporting>,
+    export_ended: Option<(PathBuf, u64, Result<(), String>)>,
     /// What the skin's images cost at the last reload (`ddi_noteskin::report`).
     images: ddi_noteskin::report::ImageReport,
     #[cfg(feature = "skincraft")]
     vector: Option<vector::Workspace>,
 }
 
+/// An export on a thread of its own: it loads the skin through the game's loader up to three
+/// times (`Project::export_added`), which takes long for a large skin, and the editor, the
+/// preview and `status` stay answerable meanwhile. It exports the project and drafts as they
+/// were when it began.
+struct Exporting {
+    path: PathBuf,
+    /// The revision exported, and when the export began (seconds since 1970, and as a
+    /// monotonic instant).
+    revision: u64,
+    started_at: u64,
+    started: Instant,
+    done: std::sync::mpsc::Receiver<Result<(), String>>,
+}
+
+fn unix_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
 impl Panel {
+    /// Begins exporting the project, its drafts and added files to `path` (a new folder) on a
+    /// thread of its own; [`Panel::export_tick`] says when it ends. One export at a time.
+    pub(crate) fn start_export(&mut self, path: &Path) -> Result<(), String> {
+        if let Some(e) = &self.exporting {
+            return Err(format!(
+                "An export to {} is under way; wait for it to end",
+                e.path.display()
+            ));
+        }
+        let project = self.project.clone().ok_or("Load a skin first")?;
+        let (edits, texts, added) = (
+            self.edits.clone(),
+            self.editor.edits.clone(),
+            self.added.clone(),
+        );
+        let out = path.to_path_buf();
+        let (tx, done) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("skincraft-export".into())
+            .spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    project.export_added(&out, &edits, &texts, &added)
+                }))
+                .unwrap_or_else(|_| Err("The export stopped unexpectedly".into()));
+                let _ = tx.send(result);
+            })
+            .map_err(|e| e.to_string())?;
+        self.exporting = Some(Exporting {
+            path: path.to_path_buf(),
+            revision: self.reloads,
+            started_at: unix_seconds(),
+            started: Instant::now(),
+            done,
+        });
+        self.failure = None;
+        self.message = format!("Exporting to {}…", path.display());
+        Ok(())
+    }
+
+    /// Notes the export under way's end once it has ended: shown, kept for `status`
+    /// (`lastExport`) and for [`Panel::take_export_ended`].
+    fn export_tick(&mut self) {
+        let Some(e) = &self.exporting else {
+            return;
+        };
+        let result = match e.done.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("The export stopped unexpectedly".into())
+            }
+        };
+        let Some(e) = self.exporting.take() else {
+            return;
+        };
+        let at = unix_seconds();
+        self.last_export = Some(match &result {
+            Ok(()) => {
+                serde_json::json!({"ok":true,"path":e.path,"revision":e.revision,"startedAt":e.started_at,"finishedAt":at})
+            }
+            Err(error) => {
+                serde_json::json!({"ok":false,"path":e.path,"error":error,"startedAt":e.started_at,"finishedAt":at})
+            }
+        });
+        match &result {
+            Ok(()) => {
+                self.failure = None;
+                self.message = format!(
+                    "Exported to {} in {:.1} s. Import its NoteSkins folder into the game.",
+                    e.path.display(),
+                    e.started.elapsed().as_secs_f64()
+                );
+            }
+            Err(error) => self.failure = Some(error.clone()),
+        }
+        self.export_ended = Some((e.path, e.revision, result));
+    }
+
+    /// The last export's end, once: where it went, its revision and how it ended.
+    #[cfg(feature = "skincraft")]
+    pub(crate) fn take_export_ended(&mut self) -> Option<(PathBuf, u64, Result<(), String>)> {
+        self.export_ended.take()
+    }
+
+    /// The export under way, for `status`: where to, the revision, and since when.
+    pub(crate) fn exporting(&self) -> Option<serde_json::Value> {
+        self.exporting.as_ref().map(|e| {
+            serde_json::json!({"path":e.path,"revision":e.revision,"startedAt":e.started_at,"seconds":e.started.elapsed().as_secs_f64()})
+        })
+    }
+
+    /// Waits for the export under way to end, then notes it as [`Panel::export_tick`] does.
+    #[cfg(test)]
+    pub(crate) fn finish_export(&mut self) {
+        let Some(e) = &mut self.exporting else {
+            return;
+        };
+        let result = e
+            .done
+            .recv()
+            .unwrap_or_else(|_| Err("The export stopped unexpectedly".into()));
+        let (tx, done) = std::sync::mpsc::channel();
+        let _ = tx.send(result);
+        e.done = done;
+        self.export_tick();
+    }
+
     pub fn new(rs: RenderState) -> Self {
         let choices = project::choices();
         let folder = std::env::var("DDI_STUDIO_SKIN").ok().unwrap_or_else(|| {
@@ -203,6 +334,8 @@ impl Panel {
             added: project::AddedFiles::new(),
             adopted: Vec::new(),
             last_export: None,
+            exporting: None,
+            export_ended: None,
             images: Default::default(),
             #[cfg(feature = "skincraft")]
             vector: None,
@@ -979,7 +1112,7 @@ impl Panel {
                     .project
                     .as_ref()
                     .ok_or_else(|| "Load a skin first".to_string())
-                    .and_then(|p| {
+                    .and_then(|_| {
                         let blockers = self.export_blockers();
                         if !blockers.is_empty() {
                             let list: Vec<String> = blockers
@@ -1002,22 +1135,11 @@ impl Panel {
                                 .collect();
                             return Err(format!("Not exported yet: {}", list.join("; ")));
                         }
-                        p.export_added(
-                            Path::new(&self.output),
-                            &self.edits,
-                            &self.editor.edits,
-                            &self.added,
-                        )
-                    });
-                match result {
-                    Ok(()) => {
-                        self.failure = None;
-                        self.message = format!(
-                            "Exported to {}. Import its NoteSkins folder into the game.",
-                            self.output
-                        );
-                    }
-                    Err(e) => self.failure = Some(e),
+                        Ok(())
+                    })
+                    .and_then(|()| self.start_export(&PathBuf::from(&self.output)));
+                if let Err(e) = result {
+                    self.failure = Some(e);
                 }
             }
         });
@@ -1152,6 +1274,11 @@ impl Panel {
 impl PanelExtension for Panel {
     fn show(&mut self, app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         self.restore_documents(app);
+        self.export_tick();
+        if self.exporting.is_some() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
         #[cfg(feature = "skincraft")]
         self.vector_tick();
         let now = Instant::now();
