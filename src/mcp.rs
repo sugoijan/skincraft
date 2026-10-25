@@ -376,7 +376,7 @@ impl SkinCraftMcp {
         .await
     }
     #[tool(
-        description = "Render the game preview offscreen at a time and size and return it as a PNG, with the revision and images hash it shows. Needs no visible window; screenshot captures the whole window instead.",
+        description = "Render the game preview offscreen at a time and size and return it as a PNG, with the revision and images hash it shows. Judgment, hold and mine effects under way at that time show as in play (the second before it is played again). Needs no visible window; screenshot captures the whole window instead.",
         annotations(read_only_hint = true)
     )]
     async fn capture_preview(&self, Parameters(p): Parameters<CaptureParams>) -> CallToolResult {

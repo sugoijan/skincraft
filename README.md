@@ -93,7 +93,7 @@ run `./run.sh` again after source changes to rebuild it.
 | `apply`, `create_file`, `import_file`, `remove_file`, `restore_file`, `discard_draft` | The project's own files, files of the skin's folder left out and back, and several changes as one revision with one reload, all or nothing |
 | `editor_request` | Native command catalogs, object/layer inspection, tools, commands and pointer strokes |
 | `save_project`, `save_file`, `export_skin` | Editable project, independent copy, runtime skin (a refusal lists each blocker) |
-| `set_preview`, `capture_preview`, `screenshot` | Layout, reverse, speed, backdrop, rules, parameters and time; an offscreen preview PNG; the whole window |
+| `set_preview`, `capture_preview`, `screenshot` | Layout, reverse, speed, backdrop, rules, parameters and time; an offscreen preview PNG (effects under way at its time shown as in play); the whole window |
 
 For native drawing, call `editor_request` with `method: "engine.commands"`
 and `editor: "vector"` or `"raster"`, then use the returned command IDs and
