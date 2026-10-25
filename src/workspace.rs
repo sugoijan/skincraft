@@ -26,6 +26,9 @@ pub struct State {
     /// in this checkpoint's `added/` (a text's is in `texts`).
     #[serde(default)]
     pub added: Vec<(PathBuf, Option<String>)>,
+    /// Files of the skin's own folder the project leaves out (`project::Added::Excluded`).
+    #[serde(default)]
+    pub excluded: Vec<PathBuf>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]

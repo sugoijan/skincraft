@@ -115,6 +115,10 @@ pub struct Panel {
     inspect_part: String,
     /// The project's own files, beside its skin's (`resources.rs`).
     added: project::AddedFiles,
+    /// The project's files last adopted from the skin's folder (`Panel::adopt_mirrored`), and
+    /// how the last export ended: what `status` reports.
+    adopted: Vec<PathBuf>,
+    last_export: Option<serde_json::Value>,
     /// What the skin's images cost at the last reload (`ddi_noteskin::report`).
     images: ddi_noteskin::report::ImageReport,
     #[cfg(feature = "skincraft")]
@@ -197,6 +201,8 @@ impl Panel {
             inspect_lane: 0,
             inspect_part: "Tap Note".into(),
             added: project::AddedFiles::new(),
+            adopted: Vec::new(),
+            last_export: None,
             images: Default::default(),
             #[cfg(feature = "skincraft")]
             vector: None,
@@ -238,6 +244,10 @@ impl Panel {
 
     fn load(&mut self) -> Result<(), String> {
         let layout = Layout::builtin(&self.layout).ok_or("Unknown layout")?;
+        let adopted = self.adopt_mirrored();
+        if !adopted.is_empty() {
+            self.adopted = adopted;
+        }
         let original = Project::open(Path::new(&self.folder), &layout)?;
         let changed_project = self
             .project

@@ -5,7 +5,7 @@ use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
@@ -32,7 +32,8 @@ pub struct WriteParams {
     /// Return the whole text (default: only its hash and size).
     pub echo: Option<bool>,
     /// Any unique string per intended edit; sending the same id again returns the first reply
-    /// instead of applying twice (safe retries after a timeout).
+    /// instead of applying twice (safe retries after a timeout). Only requests that ran are
+    /// replayed: a refused one may be corrected and sent again with its id.
     pub request_id: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -49,11 +50,43 @@ pub struct InspectParams {
     /// summary (default), files, parameters, preview, images (each image's cost, hash and budget share), editors (both native editors' full state) or all.
     pub scope: Option<String>,
 }
+/// One change of an apply: an object with its `op`. Paths are in the skin's folder (relative
+/// or absolute); import sources must be readable.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ApplyChange {
+    /// A project text file's new draft (a file of the skin or one the project added).
+    Write {
+        path: String,
+        text: String,
+        /// The hash read_text returned: refused if the draft changed since.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expect_hash: Option<String>,
+    },
+    /// A new text file (Lua, metrics, SVG…) in the skin's folder.
+    Create { path: String, text: String },
+    /// A file copied in from `source` as the project's own.
+    Import {
+        source: String,
+        path: String,
+        /// Replace a file the project imported before at `path`.
+        #[serde(default)]
+        replace: bool,
+    },
+    /// A file the project added, removed; a file of the skin's own folder, left out of the
+    /// preview and exports (the folder untouched).
+    Remove { path: String },
+    /// A file of the skin's folder that was left out, back in.
+    Restore { path: String },
+    /// A source file's text draft dropped: back to the file.
+    Discard { path: String },
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ApplyParams {
-    /// Changes applied as one revision with one preview reload; if any fails or the skin no longer loads, none applies. Each is {"op":"write","path","text","expect_hash"?}, {"op":"create","path","text"}, {"op":"import","source","path","replace"?}, {"op":"remove","path"} or {"op":"discard","path"}. Paths are in the skin's folder (relative or absolute); import sources must be readable.
-    pub changes: Vec<Value>,
+    /// Changes applied as one revision with one preview reload; if any fails or the skin no longer loads, none applies.
+    pub changes: Vec<ApplyChange>,
     pub request_id: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -187,7 +220,7 @@ impl SkinCraftMcp {
 #[tool_router(router = router)]
 impl SkinCraftMcp {
     #[tool(
-        description = "Health and identity in one small answer: app version, pid, project home and skin, active editor, preview revision, draft counts, whether anything is pending, the last failure and the images' budget. Check it first, and after a timeout before retrying.",
+        description = "Health and identity in one small answer: app version, pid, project home and skin, active editor, preview revision, draft counts, whether anything is pending, the last failure, the skin's nonfatal warnings (scripts' missing files, failed commands), files adopted from the skin's folder, how the last export ended, and the images' budget. Check it first, and after a timeout before retrying.",
         annotations(read_only_hint = true, idempotent_hint = true)
     )]
     async fn status(&self) -> CallToolResult {
@@ -245,11 +278,9 @@ impl SkinCraftMcp {
         description = "Apply several file changes as one revision with one preview reload: writes, new text files, imported files, removals and discarded drafts. All or nothing: if one fails, or the skin does not load with them, nothing changes and the last working preview stays. The source folder is never written: added files live with the project and reach the preview and exports."
     )]
     async fn apply(&self, Parameters(p): Parameters<ApplyParams>) -> CallToolResult {
-        self.call(
-            "apply",
-            json!({"changes":p.changes,"requestId":p.request_id}),
-        )
-        .await
+        let changes = serde_json::to_value(&p.changes).unwrap_or(Value::Null);
+        self.call("apply", json!({"changes":changes,"requestId":p.request_id}))
+            .await
     }
     #[tool(
         description = "Create a new text file (Lua, metrics, SVG…) in the skin's folder, or one overriding an inherited file of that name; refused if the skin already has it. Reloads the preview."
@@ -272,11 +303,21 @@ impl SkinCraftMcp {
         .await
     }
     #[tool(
-        description = "Remove a file the project added (an inherited file it overrode shows again). Reloads the preview."
+        description = "Remove a file the project added (an inherited file it overrode shows again), or leave a file of the skin's own folder out of the preview and exports (the folder itself is never changed; restore_file brings it back). Reloads the preview."
     )]
     async fn remove_file(&self, Parameters(p): Parameters<FileParams>) -> CallToolResult {
         self.call(
             "remove_file",
+            json!({"path":p.path,"requestId":p.request_id}),
+        )
+        .await
+    }
+    #[tool(
+        description = "Bring back a file of the skin's own folder that remove_file left out. Reloads the preview."
+    )]
+    async fn restore_file(&self, Parameters(p): Parameters<FileParams>) -> CallToolResult {
+        self.call(
+            "restore_file",
             json!({"path":p.path,"requestId":p.request_id}),
         )
         .await
@@ -315,7 +356,7 @@ impl SkinCraftMcp {
         self.call("save_file", json!({"path":p.path})).await
     }
     #[tool(
-        description = "Export a game-loadable noteskin into a new destination below the write root, with drafts and added files. A pending reload runs first; if a source still cannot load, the error lists each blocker with its file and stage."
+        description = "Export a game-loadable noteskin into a new destination below the write root, with drafts and added files, without the files the project left out. A pending reload runs first; if a source still cannot load, the error lists each blocker with its file and stage. If the request times out, status's lastExport says how the export ended: check it before exporting into the same destination again."
     )]
     async fn export_skin(&self, Parameters(p): Parameters<ExportParams>) -> CallToolResult {
         self.call(

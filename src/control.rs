@@ -227,7 +227,11 @@ impl host::SkinCraft {
                         Ok(v) => json!({"ok":true,"result":v}),
                         Err(e) => json!({"ok":false,"error":e}),
                     };
-                    if let Some(id) = id {
+                    // Only what ran is replayed: a refused request may be corrected and sent
+                    // again with its id.
+                    if let Some(id) = id
+                        && reply["ok"] == true
+                    {
                         if self.replies.len() >= 64 {
                             self.replies.pop_front();
                         }
@@ -286,12 +290,13 @@ impl host::SkinCraft {
                 self.panel.apply(&changes)?;
                 Ok(json!({"applied":changes.len(),"revision":self.panel.reloads,"files":self.panel.files.len(),"images":self.panel.images.summary()}))
             }
-            "create_file" | "import_file" | "remove_file" | "discard_draft" => {
+            "create_file" | "import_file" | "remove_file" | "restore_file" | "discard_draft" => {
                 let p = params["path"].as_str().ok_or("Missing path")?.to_string();
                 let change = match method {
                     "create_file" => resources::Change::Create { path: p, text: params["text"].as_str().ok_or("Missing text")?.into() },
                     "import_file" => { let source = params["source"].as_str().ok_or("Missing source")?; self.check_read(Path::new(source))?; resources::Change::Import { source: source.into(), path: p, replace: params["replace"].as_bool().unwrap_or(false) } }
                     "remove_file" => resources::Change::Remove { path: p },
+                    "restore_file" => resources::Change::Restore { path: p },
                     _ => resources::Change::Discard { path: p },
                 };
                 self.panel.apply(&[change])?;
@@ -310,7 +315,15 @@ impl host::SkinCraft {
                 if self.panel.text_reload.is_some() { self.panel.text_reload = Some(Instant::now() - Duration::from_secs(1)); self.panel.workspace_tick(&mut self.photo, ctx); }
                 let blockers = self.panel.export_blockers();
                 if !blockers.is_empty() { return Err(json!({"message":"Export needs every source loaded first","blockers":blockers}).to_string()); }
-                self.export_skin(&p)?; Ok(json!({"path":p,"revision":self.panel.reloads}))
+                // Kept for status: an export that outlives its request's timeout still says
+                // how it ended.
+                let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                let outcome = self.export_skin(&p);
+                self.panel.last_export = Some(match &outcome {
+                    Ok(()) => json!({"ok":true,"path":p,"revision":self.panel.reloads,"finishedAt":at}),
+                    Err(e) => json!({"ok":false,"path":p,"error":e,"finishedAt":at}),
+                });
+                outcome?; Ok(json!({"path":p,"revision":self.panel.reloads}))
             }
             "capture_preview" => {
                 let time = params["time"].as_f64().unwrap_or(self.panel.time);
@@ -376,9 +389,22 @@ impl host::SkinCraft {
             "drafts": {"texts": self.panel.editor.edits.len(), "added": self.panel.added.len(), "drawings": self.panel.drawings.len(), "vectors": self.panel.vector_count()},
             "pending": self.panel.has_pending_sources(), "checkpointPending": self.panel.checkpoint_dirty,
             "failure": self.panel.failure,
+            "warnings": self.warnings(),
+            "adopted": self.panel.adopted,
+            "lastExport": self.panel.last_export,
             "images": self.panel.images.summary(),
             "preview": {"time": self.panel.time, "running": self.panel.running, "ruleset": self.panel.options.rules.id},
         })
+    }
+
+    /// The previewed skin's nonfatal problems (files a script looked for and did not find, commands
+    /// that failed, elements drawn built in): how many, and the first few.
+    fn warnings(&self) -> Value {
+        let Some(skin) = self.panel.preview.noteskin() else {
+            return json!({"count":0,"first":[]});
+        };
+        let all: Vec<&String> = skin.notes.iter().chain(skin.problems().iter()).collect();
+        json!({"count": all.len(), "first": all.iter().take(8).collect::<Vec<_>>()})
     }
 
     /// One part of the workspace's state: `summary` (the default), `files`, `parameters`,

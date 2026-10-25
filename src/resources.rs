@@ -30,8 +30,11 @@ pub enum Change {
         #[serde(default)]
         replace: bool,
     },
-    /// A file the project added, removed (an inherited file it overrode shows again).
+    /// A file the project added, removed (an inherited file it overrode shows again); a file of
+    /// the skin's own folder, left out of the preview and exports (the folder untouched).
     Remove { path: String },
+    /// A file of the skin's own folder that was left out, back in.
+    Restore { path: String },
     /// A source file's draft dropped: back to the file.
     Discard { path: String },
 }
@@ -65,7 +68,7 @@ impl Panel {
             .iter()
             .filter_map(|(path, file)| match file {
                 project::Added::File(copy) => Some((path.clone(), copy.clone())),
-                project::Added::Text => None,
+                project::Added::Text | project::Added::Excluded => None,
             })
             .collect()
     }
@@ -249,15 +252,29 @@ impl Panel {
             }
             Change::Remove { path } => {
                 let p = self.own_path(path)?;
-                match self.added.remove(&p) {
+                match self.added.get(&p) {
+                    Some(project::Added::Excluded) => Err(format!("{path} is left out already")),
                     Some(_) => {
+                        self.added.remove(&p);
                         self.editor.discard(&p);
                         self.refresh_files()
                     }
-                    None => Err(format!(
-                        "{path} is not a file the project added; discard its draft instead"
-                    )),
+                    // A file of the skin's own folder: left out, the folder untouched.
+                    None if p.is_file() => {
+                        self.editor.discard(&p);
+                        self.added.insert(p, project::Added::Excluded);
+                        self.refresh_files()
+                    }
+                    None => Err(format!("{path} is not a file of the skin")),
                 }
+            }
+            Change::Restore { path } => {
+                let p = self.own_path(path)?;
+                if self.added.get(&p) != Some(&project::Added::Excluded) {
+                    return Err(format!("{path} is not a file the project left out"));
+                }
+                self.added.remove(&p);
+                self.refresh_files()
             }
             Change::Discard { path } => {
                 let p = self.text_file(path)?;
@@ -288,6 +305,36 @@ impl Panel {
         } else {
             Err(format!("{path} is not a text file of this project"))
         }
+    }
+
+    /// The project's own files the skin's folder now holds with the same bytes (copied there,
+    /// as when files are mirrored into the source): the folder's are used and the project's
+    /// dropped, rather than refusing the skin for two files at one path. Their paths.
+    pub(super) fn adopt_mirrored(&mut self) -> Vec<PathBuf> {
+        let same: Vec<PathBuf> = self
+            .added
+            .iter()
+            .filter(|(path, file)| {
+                let Ok(folder) = std::fs::read(path) else {
+                    return false;
+                };
+                let ours = match (self.editor.edits.get(*path), file) {
+                    (Some(text), _) => Some(text.as_bytes().to_vec()),
+                    (None, project::Added::File(copy)) => std::fs::read(copy).ok(),
+                    (None, _) => None,
+                };
+                ours.is_some_and(|ours| ours == folder)
+            })
+            .map(|(path, _)| path.clone())
+            .collect();
+        for path in &same {
+            self.added.remove(path);
+            self.editor.discard(path);
+        }
+        if !same.is_empty() {
+            self.checkpoint_dirty = true;
+        }
+        same
     }
 
     /// Applies `changes` as one revision: each checked, then the preview reloaded once through
@@ -335,6 +382,7 @@ fn describe(change: &Change) -> String {
         Change::Create { path, .. } => format!("create {path}"),
         Change::Import { path, .. } => format!("import {path}"),
         Change::Remove { path } => format!("remove {path}"),
+        Change::Restore { path } => format!("restore {path}"),
         Change::Discard { path } => format!("discard {path}"),
     }
 }

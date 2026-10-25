@@ -1096,6 +1096,74 @@ mod integration_tests {
     }
 
     #[test]
+    fn files_are_left_out_restored_and_adopted_without_touching_the_folder() {
+        let root = crate::project::tests::fixture("left-out");
+        let home = root.join("profile");
+        let skin = root.join("dance/Test");
+        std::fs::write(skin.join("notes.txt"), "a file the skin keeps\n").unwrap();
+        let mut h = harness(&home);
+        h.run_steps(3);
+        h.state_mut().load_skin(&skin).unwrap();
+        h.run_steps(3);
+        let context = egui::Context::default();
+        let mut request =
+            |h: &mut egui_kittest::Harness<'static, SkinCraft>, method: &str, params: Value| {
+                h.state_mut().request(method, params, &context)
+            };
+        let names = |h: &egui_kittest::Harness<'static, SkinCraft>| -> Vec<String> {
+            h.state()
+                .panel
+                .files
+                .iter()
+                .map(|f| f.name.clone())
+                .collect()
+        };
+        // Left out: no longer the project's, not exported; the folder untouched.
+        request(&mut h, "remove_file", json!({"path":"notes.txt"})).unwrap();
+        assert!(!names(&h).contains(&"notes.txt".to_string()));
+        request(&mut h, "export_skin", json!({"path":home.join("left-out")})).unwrap();
+        let exported = home.join("left-out/NoteSkins/dance/Test");
+        assert!(exported.join("Down Tap Note.png").is_file());
+        assert!(!exported.join("notes.txt").exists());
+        assert!(skin.join("notes.txt").is_file(), "the folder untouched");
+        let status = request(&mut h, "status", json!({})).unwrap();
+        assert_eq!(status["lastExport"]["ok"], true);
+        assert!(request(&mut h, "remove_file", json!({"path":"notes.txt"})).is_err());
+        // Kept with the project, and back in once restored.
+        request(&mut h, "save_project", json!({})).unwrap();
+        request(&mut h, "restore_file", json!({"path":"notes.txt"})).unwrap();
+        assert!(names(&h).contains(&"notes.txt".to_string()));
+        request(&mut h, "export_skin", json!({"path":home.join("restored")})).unwrap();
+        assert!(
+            home.join("restored/NoteSkins/dance/Test/notes.txt")
+                .is_file()
+        );
+        // A file the project made, then copied into the folder as it is (mirrored): the
+        // folder's is used, the project's dropped, rather than refusing the skin.
+        request(
+            &mut h,
+            "create_file",
+            json!({"path":"Extra.lua","text":"return {}\n"}),
+        )
+        .unwrap();
+        std::fs::write(skin.join("Extra.lua"), "return {}\n").unwrap();
+        request(&mut h, "remove_file", json!({"path":"notes.txt"})).unwrap();
+        let status = request(&mut h, "status", json!({})).unwrap();
+        assert!(
+            status["adopted"].to_string().contains("Extra.lua"),
+            "{status}"
+        );
+        assert!(
+            h.state()
+                .panel
+                .files
+                .iter()
+                .any(|f| f.name == "Extra.lua" && !f.added)
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn parameter_controls_and_mcp_preserve_preview_and_project_choices() {
         use ddi_noteskin::params::Value as ParamValue;
         let root = crate::project::tests::parameter_fixture("parameter-controls");
@@ -1396,6 +1464,18 @@ mod integration_tests {
             assert_eq!(initialized["result"]["serverInfo"]["name"], "skincraft");
             let tools = rpc("tools/list", json!({}));
             assert!(tools["result"]["tools"].as_array().unwrap().len() >= 13);
+            // apply's changes are declared as objects with their op, not strings.
+            let apply = tools["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["name"] == "apply")
+                .unwrap();
+            let schema = apply["inputSchema"].to_string();
+            assert!(
+                schema.contains("\"op\"") && schema.contains("restore"),
+                "{schema}"
+            );
             // A name starting with `!` is a call expected to be refused.
             let mut call = |name: &str, args: Value| -> Value {
                 let (name, refused) = match name.strip_prefix('!') {
@@ -1528,6 +1608,16 @@ mod integration_tests {
                     .to_string()
                     .contains("Another.lua")
             );
+            // A refused request is not replayed: corrected, its id runs.
+            call(
+                "!apply",
+                json!({"changes":[{"op":"remove","path":"No Such File.lua"}],"request_id":"corrected"}),
+            );
+            let corrected = text(&call(
+                "apply",
+                json!({"changes":[{"op":"create","path":"Corrected.lua","text":"return {}\n"}],"request_id":"corrected"}),
+            ));
+            assert_eq!(corrected["applied"], 1);
             let capture = call(
                 "capture_preview",
                 json!({"time":1.0,"width":256,"height":320}),

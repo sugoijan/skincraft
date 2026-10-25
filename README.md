@@ -86,11 +86,11 @@ run `./run.sh` again after source changes to rebuild it.
 
 | Tools | Purpose |
 | --- | --- |
-| `status` | Small health answer: version, project, active editor, preview revision, drafts, pending work, failure, images' budget |
+| `status` | Small health answer: version, project, active editor, preview revision, drafts, pending work, failure, the skin's nonfatal warnings, files adopted from the skin's folder, the last export's outcome, images' budget |
 | `inspect_workspace`, `list_files` | One `scope` at a time (`summary`, `files`, `parameters`, `preview`, `images`, `editors`, `all`); fallback resources, added files and drafts |
 | `open_file`, `load_skin` | File-type routing and switching noteskin projects |
 | `read_text`, `write_text`, `release_svg_source` | Drafts with hashes (`expect_hash` refuses a stale write), slices of large files, replies without echoing the text |
-| `apply`, `create_file`, `import_file`, `remove_file`, `discard_draft` | The project's own files and several changes as one revision with one reload, all or nothing |
+| `apply`, `create_file`, `import_file`, `remove_file`, `restore_file`, `discard_draft` | The project's own files, files of the skin's folder left out and back, and several changes as one revision with one reload, all or nothing |
 | `editor_request` | Native command catalogs, object/layer inspection, tools, commands and pointer strokes |
 | `save_project`, `save_file`, `export_skin` | Editable project, independent copy, runtime skin (a refusal lists each blocker) |
 | `set_preview`, `capture_preview`, `screenshot` | Layout, reverse, speed, backdrop, rules, parameters and time; an offscreen preview PNG; the whole window |
@@ -110,15 +110,22 @@ in the MCP configuration or process arguments. Calls expire before dispatch
 if the window stops processing frames. A timed-out dispatched edit is never
 replayed automatically. Give mutating calls a `request_id`: sending the same
 id again returns the first reply instead of applying twice (the latest 64
-are kept); without one, check `status` before retrying.
+are kept; a refused request is not, so it may be corrected and sent again
+with its id); without one, check `status` before retrying. An export that
+outlives its request still records how it ended in `status`'s `lastExport`.
 
 Files an agent creates or imports (`create_file`, `import_file`, `apply`)
 belong to the project, never to the source folder: a text is a draft, an
 imported file a copy beside the project's checkpoint. Both are loaded by the
 preview, listed with `added: true`, kept across sessions and written by an
-export. `apply` takes `write`, `create`, `import`, `remove` and `discard`
-changes together and reloads once; if one fails, or the skin does not load
-with them, none applies and the last working preview stays.
+export. `apply` takes `write`, `create`, `import`, `remove`, `restore` and
+`discard` changes together and reloads once; if one fails, or the skin does
+not load with them, none applies and the last working preview stays.
+`remove_file` on a file of the skin's own folder leaves it out of the
+preview and exports (a resource the project's files replace) without
+touching the folder; `restore_file` brings it back. A file the project
+added that the skin's folder now holds with the same bytes (files mirrored
+into the source) is adopted: the folder's is used, and `status` lists it.
 
 By default, MCP can open bundled noteskins, current project resources and
 reference files in the project home. Writes go under that home; existing

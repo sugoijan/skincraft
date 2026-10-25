@@ -23,13 +23,16 @@ impl Panel {
             return Ok(());
         };
         // The project's own files first: drafts and tabs may be theirs.
-        if !state.added.is_empty() {
+        if !state.added.is_empty() || !state.excluded.is_empty() {
             for (path, stored) in &state.added {
                 let file = match stored {
                     Some(name) => project::Added::File(dir.join("added").join(name)),
                     None => project::Added::Text,
                 };
                 self.added.insert(path.clone(), file);
+            }
+            for path in &state.excluded {
+                self.added.insert(path.clone(), project::Added::Excluded);
             }
             self.files = files::with_added(std::mem::take(&mut self.files), project, &self.added);
         }
@@ -152,15 +155,22 @@ impl Panel {
                 added: self
                     .added
                     .iter()
-                    .map(|(path, file)| {
+                    .filter_map(|(path, file)| {
                         let stored = match file {
                             project::Added::Text => None,
                             project::Added::File(copy) => {
                                 copy.file_name().map(|n| n.to_string_lossy().into_owned())
                             }
+                            project::Added::Excluded => return None,
                         };
-                        (path.clone(), stored)
+                        Some((path.clone(), stored))
                     })
+                    .collect(),
+                excluded: self
+                    .added
+                    .iter()
+                    .filter(|(_, file)| **file == project::Added::Excluded)
+                    .map(|(path, _)| path.clone())
                     .collect(),
                 ..Default::default()
             },

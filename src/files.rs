@@ -97,7 +97,12 @@ pub fn with_added(
     let Some(base) = project.skins.first() else {
         return files;
     };
-    for path in added.keys() {
+    // The skin's own files the project left out are not its files any more.
+    files.retain(|f| !matches!(added.get(&f.path), Some(crate::project::Added::Excluded)));
+    for (path, file) in added {
+        if *file == crate::project::Added::Excluded {
+            continue;
+        }
         let Ok(rel) = path.strip_prefix(&base.dir) else {
             continue;
         };

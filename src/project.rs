@@ -27,6 +27,9 @@ pub struct Project {
 pub enum Added {
     Text,
     File(PathBuf),
+    /// A file of the skin's own folder left out: never in the preview or exports, the source
+    /// folder untouched (a resource the project's files replace).
+    Excluded,
 }
 
 /// The files a project adds, by the path each would have in its skin's folder.
@@ -315,6 +318,13 @@ impl Project {
                 return Err(format!("Cannot export every file: {:?}", files.unread));
             }
             for f in files.listed {
+                // A file of the skin's own folder the project left out.
+                if matches!(
+                    added.get(&s.dir.join(f.path.as_str())),
+                    Some(Added::Excluded)
+                ) {
+                    continue;
+                }
                 bytes = bytes.checked_add(f.size).ok_or("Skin too large")?;
                 if bytes > 512 << 20 {
                     return Err("Export exceeds 512 MiB".into());
@@ -379,13 +389,16 @@ impl Project {
             let base = self.skins.first().ok_or("No skin selected")?;
             let target = out.join("NoteSkins").join(&base.game).join(&base.name);
             for (path, file) in added {
+                if *file == Added::Excluded {
+                    continue;
+                }
                 let rel = path
                     .strip_prefix(&base.dir)
                     .map_err(|_| format!("{} is not in the skin's folder", path.display()))?;
                 let to = target.join(rel);
                 if !destinations.insert(to.to_string_lossy().to_lowercase()) {
                     return Err(format!(
-                        "{} would replace a file of the skin",
+                        "{} would replace a file of the skin's folder, which differs from the project's: remove the project's file (remove_file) to use the folder's, or leave the folder's out (remove_file on it after)",
                         rel.display()
                     ));
                 }
@@ -409,6 +422,7 @@ impl Project {
                         std::fs::copy(stored, &to)
                             .map_err(|e| format!("{}: {e}", rel.display()))?;
                     }
+                    Added::Excluded => {}
                 }
                 if ddi_noteskin::import::kept_text(&rel.to_string_lossy()) {
                     texts.push(to);
