@@ -454,7 +454,9 @@ mod tests {
                 app.panel.folder = folder.to_string_lossy().into_owned();
                 app.panel.load().unwrap();
                 app.panel.running = false;
-                app.panel.time = 3.8;
+                // While the demo phrase's taps cross the field (it begins after four beats
+                // of lead-in, its taps in its first three beats).
+                app.panel.time = 2.0;
                 app.panel
                     .open_file(&mut app.photo, &folder.join("_onigiri shape.svg"))
                     .unwrap();
