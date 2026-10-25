@@ -935,6 +935,7 @@ impl Panel {
                                 Outcome::ByBrowser => " · drawn by the browser".into(),
                                 Outcome::LeftOut => " · left out: over the budget".into(),
                                 Outcome::Failed(why) => format!(" · failed: {why}"),
+                                Outcome::Shared(with) => format!(" · the same pixels as {with}"),
                             };
                             let text = format!(
                                 "{} · {}×{} at {:.1}× · {:.2} Mpx{outcome}",
@@ -944,7 +945,7 @@ impl Panel {
                                 i.scale(),
                                 i.pixels() as f64 / f64::from(1 << 20)
                             );
-                            if matches!(i.outcome, Outcome::Kept) {
+                            if matches!(i.outcome, Outcome::Kept | Outcome::Shared(_)) {
                                 ui.small(text);
                             } else {
                                 ui.colored_label(
